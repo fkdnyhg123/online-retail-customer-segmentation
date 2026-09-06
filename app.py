@@ -206,43 +206,6 @@ st.sidebar.markdown(f"**📂 数据集:** Online Retail II")
 st.sidebar.markdown(f"**📅 {cleaning_summary['date_range_start']} ~ {cleaning_summary['date_range_end']}**")
 st.sidebar.markdown(f"**📦 清洗后:** {cleaning_summary['cleaned_rows']:,} 条 · {cleaning_summary['unique_customers']:,} 客户")
 
-# ---- 全局月份筛选器 (图表联动) ----
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📅 时间筛选")
-date_min = pd.Timestamp(cleaned_df['InvoiceDate'].min())
-date_max = pd.Timestamp(cleaned_df['InvoiceDate'].max())
-month_start = date_min.to_period('M').ordinal
-month_end = date_max.to_period('M').ordinal
-
-_all_months = pd.period_range(date_min, date_max, freq='M')
-_format_month = lambda o: str(pd.Period(ordinal=o, freq='M'))
-
-col_s1, col_s2 = st.sidebar.columns(2)
-with col_s1:
-    sel_start = st.selectbox("起始月", options=list(range(month_start, month_end + 1)),
-                              index=0, format_func=_format_month, key="m_start")
-with col_s2:
-    sel_end = st.selectbox("结束月", options=list(range(month_start, month_end + 1)),
-                            index=len(_all_months) - 1, format_func=_format_month, key="m_end")
-
-if sel_start > sel_end:
-    sel_start, sel_end = sel_end, sel_start
-
-filter_start = pd.Period(ordinal=sel_start, freq='M').start_time
-filter_end = pd.Period(ordinal=sel_end, freq='M').end_time
-
-# 应用筛选
-cleaned_df = cleaned_df[(cleaned_df['InvoiceDate'] >= filter_start) & (cleaned_df['InvoiceDate'] <= filter_end)].copy()
-rfm_df = calculate_rfm(cleaned_df)
-rfm_scored = add_rfm_scores(rfm_df)
-rfm_stats = get_rfm_stats(rfm_df)
-
-if len(cleaned_df) == 0:
-    st.warning("⚠️ 所选时间范围内无数据，请调整筛选条件。")
-    st.stop()
-
-st.sidebar.caption(f"当前筛选: **{len(cleaned_df):,}** 条交易 · **{rfm_df.shape[0]:,}** 位客户")
-
 # ============================================================
 # 页面 1: 数据概览
 # ============================================================
@@ -402,42 +365,68 @@ elif page == "🔍 数据探索":
     st.title("🔍 数据探索")
     st.markdown("对清洗后的数据进行深入的分布分析和特征探索，发现数据模式和业务洞察。")
 
+    # ---- 本页面时间筛选器 ----
+    with st.expander("📅 时间范围筛选 (仅影响本页图表)", expanded=False):
+        _date_min = pd.Timestamp(cleaned_df['InvoiceDate'].min())
+        _date_max = pd.Timestamp(cleaned_df['InvoiceDate'].max())
+        _months = pd.period_range(_date_min, _date_max, freq='M')
+        _fmt = lambda o: str(pd.Period(ordinal=o, freq='M'))
+        _ms, _me = _date_min.to_period('M').ordinal, _date_max.to_period('M').ordinal
+        c1, c2 = st.columns(2)
+        with c1:
+            _sel_s = st.selectbox("起始月", list(range(_ms, _me + 1)),
+                                   index=0, format_func=_fmt, key="exp_s")
+        with c2:
+            _sel_e = st.selectbox("结束月", list(range(_ms, _me + 1)),
+                                   index=len(_months) - 1, format_func=_fmt, key="exp_e")
+        if _sel_s > _sel_e:
+            _sel_s, _sel_e = _sel_e, _sel_s
+        _fs = pd.Period(ordinal=_sel_s, freq='M').start_time
+        _fe = pd.Period(ordinal=_sel_e, freq='M').end_time
+
+    explore_df = cleaned_df[(cleaned_df['InvoiceDate'] >= _fs) & (cleaned_df['InvoiceDate'] <= _fe)].copy()
+    if len(explore_df) == 0:
+        st.warning("⚠️ 所选时间范围内无数据。")
+        st.stop()
+    st.caption(f"当前范围: **{len(explore_df):,}** 条交易 · "
+               f"**{explore_df['InvoiceDate'].min().date()}** ~ **{explore_df['InvoiceDate'].max().date()}**")
+
     # 字段分布
     st.subheader("📊 字段值分布")
     st.caption("通过直方图观察各字段的值分布形态，判断是否存在偏态、离群值等特征。")
     tab1, tab2, tab3 = st.tabs(["数量 (Quantity)", "单价 (Price)", "收入 (Revenue)"])
 
     with tab1:
-        fig_qty = px.histogram(cleaned_df, x='Quantity', nbins=80,
+        fig_qty = px.histogram(explore_df, x='Quantity', nbins=80,
                                color_discrete_sequence=[COLORS['primary']])
         fig_qty.update_layout(**CHART_LAYOUT, height=400, title="订单数量分布",
                               xaxis_title='购买数量', yaxis_title='订单数',
-                              xaxis=dict(range=[0, cleaned_df['Quantity'].quantile(0.95) * 1.1]))
+                              xaxis=dict(range=[0, explore_df['Quantity'].quantile(0.95) * 1.1]))
         st.plotly_chart(fig_qty, use_container_width=True)
-        st.markdown(f"均值: {cleaned_df['Quantity'].mean():.1f} | 中位数: {cleaned_df['Quantity'].median():.0f} | 最大值: {cleaned_df['Quantity'].max()}")
+        st.markdown(f"均值: {explore_df['Quantity'].mean():.1f} | 中位数: {explore_df['Quantity'].median():.0f} | 最大值: {explore_df['Quantity'].max()}")
 
     with tab2:
-        fig_price = px.histogram(cleaned_df, x='Price', nbins=80,
+        fig_price = px.histogram(explore_df, x='Price', nbins=80,
                                  color_discrete_sequence=[COLORS['secondary']])
         fig_price.update_layout(**CHART_LAYOUT, height=400, title="单价分布",
                                 xaxis_title='单价 (美元 $)', yaxis_title='订单数',
-                                xaxis=dict(range=[0, cleaned_df['Price'].quantile(0.95) * 1.1]))
+                                xaxis=dict(range=[0, explore_df['Price'].quantile(0.95) * 1.1]))
         st.plotly_chart(fig_price, use_container_width=True)
-        st.markdown(f"均值: ${cleaned_df['Price'].mean():.2f} | 中位数: ${cleaned_df['Price'].median():.2f} | 最大值: ${cleaned_df['Price'].max():.2f}")
+        st.markdown(f"均值: ${explore_df['Price'].mean():.2f} | 中位数: ${explore_df['Price'].median():.2f} | 最大值: ${explore_df['Price'].max():.2f}")
 
     with tab3:
-        fig_rev = px.histogram(cleaned_df, x='Revenue', nbins=80,
+        fig_rev = px.histogram(explore_df, x='Revenue', nbins=80,
                                color_discrete_sequence=[COLORS['success']])
         fig_rev.update_layout(**CHART_LAYOUT, height=400, title="单笔交易收入分布",
                               xaxis_title='收入 (美元 $)', yaxis_title='订单数',
-                              xaxis=dict(range=[0, cleaned_df['Revenue'].quantile(0.95) * 1.1]))
+                              xaxis=dict(range=[0, explore_df['Revenue'].quantile(0.95) * 1.1]))
         st.plotly_chart(fig_rev, use_container_width=True)
 
     # 热销商品
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
     st.subheader("🏆 热销商品排名 (按收入)")
     top_n = st.slider("显示数量", min_value=5, max_value=30, value=20, step=5, key="top_n")
-    top_products = cleaned_df.groupby(['StockCode', 'Description']).agg(
+    top_products = explore_df.groupby(['StockCode', 'Description']).agg(
         收入=('Revenue', 'sum'),
         销量=('Quantity', 'sum'),
         订单数=('Invoice', 'nunique')
