@@ -62,6 +62,47 @@ st.markdown("""
     .metric-card h2 { color: #2563eb; margin: 0; font-size: 28px; }
     .metric-card p { color: #6b7280; margin: 5px 0 0 0; font-size: 13px; }
 
+    /* 日期范围卡片 (更宽) */
+    .date-card {
+        background: linear-gradient(135deg, #f0f4ff 0%, #e8f4fd 100%);
+        border-radius: 16px; padding: 16px 20px; text-align: center;
+        border: 1px solid #d0e0f0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .date-card h3 { color: #2563eb; margin: 0; font-size: 20px; letter-spacing: 1px; }
+    .date-card p { color: #6b7280; margin: 4px 0 0 0; font-size: 13px; }
+
+    /* 带左侧色条的标题 */
+    .section-header {
+        border-left: 4px solid #2563eb;
+        padding-left: 12px;
+        margin: 24px 0 12px 0;
+    }
+
+    /* 信息提示条 */
+    .info-banner {
+        background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%);
+        border-radius: 12px; padding: 14px 20px;
+        border: 1px solid #bfdbfe;
+        margin: 12px 0;
+        font-size: 13px; color: #374151;
+    }
+
+    /* 宽幅指标卡 */
+    .metric-card-wide {
+        background: linear-gradient(135deg, #f0f4ff 0%, #e8f4fd 100%);
+        border-radius: 16px; padding: 18px 28px; text-align: center;
+        border: 1px solid #d0e0f0;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+    .metric-card-wide:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+    }
+    .metric-card-wide h2 { color: #2563eb; margin: 0; font-size: 24px; }
+    .metric-card-wide p { color: #6b7280; margin: 5px 0 0 0; font-size: 13px; }
+
     /* 聚类详情卡片 */
     .cluster-card {
         background: linear-gradient(135deg, #f0f4ff 0%, #faf5ff 100%);
@@ -161,10 +202,46 @@ page = st.sidebar.radio(
 )
 
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"**数据集:** Online Retail II (在线零售)")
-st.sidebar.markdown(f"**时间范围:** {cleaning_summary['date_range_start']} ~ {cleaning_summary['date_range_end']}")
-st.sidebar.markdown(f"**清洗后记录:** {cleaning_summary['cleaned_rows']:,} 条")
-st.sidebar.markdown(f"**客户数量:** {cleaning_summary['unique_customers']:,} 人")
+st.sidebar.markdown(f"**📂 数据集:** Online Retail II")
+st.sidebar.markdown(f"**📅 {cleaning_summary['date_range_start']} ~ {cleaning_summary['date_range_end']}**")
+st.sidebar.markdown(f"**📦 清洗后:** {cleaning_summary['cleaned_rows']:,} 条 · {cleaning_summary['unique_customers']:,} 客户")
+
+# ---- 全局月份筛选器 (图表联动) ----
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 📅 时间筛选")
+date_min = pd.Timestamp(cleaned_df['InvoiceDate'].min())
+date_max = pd.Timestamp(cleaned_df['InvoiceDate'].max())
+month_start = date_min.to_period('M').ordinal
+month_end = date_max.to_period('M').ordinal
+
+_all_months = pd.period_range(date_min, date_max, freq='M')
+_format_month = lambda o: str(pd.Period(ordinal=o, freq='M'))
+
+col_s1, col_s2 = st.sidebar.columns(2)
+with col_s1:
+    sel_start = st.selectbox("起始月", options=list(range(month_start, month_end + 1)),
+                              index=0, format_func=_format_month, key="m_start")
+with col_s2:
+    sel_end = st.selectbox("结束月", options=list(range(month_start, month_end + 1)),
+                            index=len(_all_months) - 1, format_func=_format_month, key="m_end")
+
+if sel_start > sel_end:
+    sel_start, sel_end = sel_end, sel_start
+
+filter_start = pd.Period(ordinal=sel_start, freq='M').start_time
+filter_end = pd.Period(ordinal=sel_end, freq='M').end_time
+
+# 应用筛选
+cleaned_df = cleaned_df[(cleaned_df['InvoiceDate'] >= filter_start) & (cleaned_df['InvoiceDate'] <= filter_end)].copy()
+rfm_df = calculate_rfm(cleaned_df)
+rfm_scored = add_rfm_scores(rfm_df)
+rfm_stats = get_rfm_stats(rfm_df)
+
+if len(cleaned_df) == 0:
+    st.warning("⚠️ 所选时间范围内无数据，请调整筛选条件。")
+    st.stop()
+
+st.sidebar.caption(f"当前筛选: **{len(cleaned_df):,}** 条交易 · **{rfm_df.shape[0]:,}** 位客户")
 
 # ============================================================
 # 页面 1: 数据概览
@@ -183,14 +260,14 @@ if page == "📈 数据概览":
     """)
 
     # 数据规模快速概览
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns([1, 2, 1])
     with col1:
         st.metric("原始记录数", f"{cleaning_summary['raw_rows']:,}")
     with col2:
-        st.metric("字段数", "8")
+        st.markdown(
+            f'<div class="date-card"><p>时间跨度</p><h3>{cleaning_summary["date_range_start"]} ~ {cleaning_summary["date_range_end"]}</h3></div>',
+            unsafe_allow_html=True)
     with col3:
-        st.metric("时间跨度", f"{cleaning_summary['date_range_start']} ~ {cleaning_summary['date_range_end']}")
-    with col4:
         st.metric("覆盖国家", f"{raw_df['Country'].nunique()} 个")
 
     # 三个初步观察
@@ -270,23 +347,6 @@ if page == "📈 数据概览":
     with col_c3:
         st.metric("交易记录数", f"{cleaning_summary['cleaned_rows']:,} 条")
 
-    # 清洗后质量检查
-    clean_issues = [
-        ("取消订单", cleaned_quality['cancelled_orders']),
-        ("缺失客户ID", cleaned_quality['missing_customer_id']),
-        ("负数量", cleaned_quality['negative_quantity']),
-        ("零/负价格", cleaned_quality['zero_neg_price']),
-        ("精确重复", cleaned_quality['exact_duplicates']),
-        ("非商品编码", cleaned_quality['special_stockcodes']),
-    ]
-    all_clean = all(v == 0 for _, v in clean_issues)
-    if all_clean:
-        st.success("✅ 所有质量检查项均为 0 — 数据清洗完成，无残留问题。")
-    else:
-        for label, count in clean_issues:
-            if count > 0:
-                st.warning(f"⚠️ {label}: 仍有 {count:,} 条")
-
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
     # ---- 清洗后数据 KPI 与趋势 ----
@@ -352,7 +412,7 @@ elif page == "🔍 数据探索":
                                color_discrete_sequence=[COLORS['primary']])
         fig_qty.update_layout(**CHART_LAYOUT, height=400, title="订单数量分布",
                               xaxis_title='购买数量', yaxis_title='订单数',
-                              xaxis=dict(range=[0, cleaned_df['Quantity'].max()]))
+                              xaxis=dict(range=[0, cleaned_df['Quantity'].quantile(0.95) * 1.1]))
         st.plotly_chart(fig_qty, use_container_width=True)
         st.markdown(f"均值: {cleaned_df['Quantity'].mean():.1f} | 中位数: {cleaned_df['Quantity'].median():.0f} | 最大值: {cleaned_df['Quantity'].max()}")
 
@@ -361,7 +421,7 @@ elif page == "🔍 数据探索":
                                  color_discrete_sequence=[COLORS['secondary']])
         fig_price.update_layout(**CHART_LAYOUT, height=400, title="单价分布",
                                 xaxis_title='单价 (美元 $)', yaxis_title='订单数',
-                                xaxis=dict(range=[0, cleaned_df['Price'].max()]))
+                                xaxis=dict(range=[0, cleaned_df['Price'].quantile(0.95) * 1.1]))
         st.plotly_chart(fig_price, use_container_width=True)
         st.markdown(f"均值: ${cleaned_df['Price'].mean():.2f} | 中位数: ${cleaned_df['Price'].median():.2f} | 最大值: ${cleaned_df['Price'].max():.2f}")
 
@@ -370,22 +430,23 @@ elif page == "🔍 数据探索":
                                color_discrete_sequence=[COLORS['success']])
         fig_rev.update_layout(**CHART_LAYOUT, height=400, title="单笔交易收入分布",
                               xaxis_title='收入 (美元 $)', yaxis_title='订单数',
-                              xaxis=dict(range=[0, cleaned_df['Revenue'].max()]))
+                              xaxis=dict(range=[0, cleaned_df['Revenue'].quantile(0.95) * 1.1]))
         st.plotly_chart(fig_rev, use_container_width=True)
 
     # 热销商品
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-    st.subheader("🏆 热销商品 Top 20 (按收入排名)")
+    st.subheader("🏆 热销商品排名 (按收入)")
+    top_n = st.slider("显示数量", min_value=5, max_value=30, value=20, step=5, key="top_n")
     top_products = cleaned_df.groupby(['StockCode', 'Description']).agg(
         收入=('Revenue', 'sum'),
         销量=('Quantity', 'sum'),
         订单数=('Invoice', 'nunique')
-    ).sort_values('收入', ascending=False).head(20).reset_index()
+    ).sort_values('收入', ascending=False).head(top_n).reset_index()
     top_products['商品名称'] = top_products.apply(lambda r: f"{r['Description']}  ({r['StockCode']})", axis=1)
     fig_top = px.bar(top_products, x='收入', y='商品名称', orientation='h',
                      color='收入', color_continuous_scale='Viridis',
                      hover_data=['StockCode', '销量', '订单数'])
-    fig_top.update_layout(**CHART_LAYOUT, height=650, showlegend=False,
+    fig_top.update_layout(**CHART_LAYOUT, height=max(350, top_n * 32), showlegend=False,
                           yaxis={'categoryorder': 'total ascending'},
                           xaxis_title='总收入 (美元 $)')
     st.plotly_chart(fig_top, use_container_width=True)
@@ -419,7 +480,7 @@ elif page == "💰 RFM 分析":
                              color_discrete_sequence=[COLORS['primary']])
         fig_r.update_layout(**CHART_LAYOUT, title="R - 最近购买间隔分布",
                             xaxis_title='距上次购买 (天)', yaxis_title='客户数', height=360,
-                            xaxis=dict(range=[0, rfm_df['Recency'].max()]))
+                            xaxis=dict(range=[0, rfm_df['Recency'].quantile(0.95) * 1.1]))
         st.plotly_chart(fig_r, use_container_width=True)
 
     with col2:
@@ -427,7 +488,7 @@ elif page == "💰 RFM 分析":
                              color_discrete_sequence=[COLORS['danger']])
         fig_f.update_layout(**CHART_LAYOUT, title="F - 购买频率分布",
                             xaxis_title='订单数', yaxis_title='客户数', height=360,
-                            xaxis=dict(range=[0, rfm_df['Frequency'].max()]))
+                            xaxis=dict(range=[0, rfm_df['Frequency'].quantile(0.95) * 1.1]))
         st.plotly_chart(fig_f, use_container_width=True)
 
     with col3:
@@ -435,10 +496,35 @@ elif page == "💰 RFM 分析":
                              color_discrete_sequence=[COLORS['success']])
         fig_m.update_layout(**CHART_LAYOUT, title="M - 消费金额分布",
                             xaxis_title='总消费 ($)', yaxis_title='客户数', height=360,
-                            xaxis=dict(range=[0, rfm_df['Monetary'].max()]))
+                            xaxis=dict(range=[0, rfm_df['Monetary'].quantile(0.95) * 1.1]))
         st.plotly_chart(fig_m, use_container_width=True)
 
     st.caption("💡 **解读**: R (最近购买间隔) 呈较均匀的右偏分布，中位数 52 天，说明大多数客户在 2 个月内有购买行为。F (购买频率) 和 M (消费金额) 均呈严重右偏分布，中位数远低于均值——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。这种偏态分布是后续需要做对数变换的原因。")
+
+    # RFM 相关性矩阵
+    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+    col_corr1, col_corr2 = st.columns([1, 2])
+    with col_corr1:
+        st.subheader("🔗 RFM 相关性矩阵")
+        st.markdown("""
+        F (频率) 和 M (金额) 高度相关 (r≈0.8)，说明买得多的客户也花得多。
+        这一相关性是后续聚类中将 F/M 合并为 composite 特征的理论依据。
+        """)
+    with col_corr2:
+        corr = rfm_df[['Recency', 'Frequency', 'Monetary']].corr()
+        corr_display = corr.copy()
+        corr_display.index = ['R-最近购买', 'F-购买频率', 'M-消费金额']
+        corr_display.columns = ['R-最近购买', 'F-购买频率', 'M-消费金额']
+        fig_corr = px.imshow(corr_display.values,
+                             x=corr_display.columns.tolist(),
+                             y=corr_display.index.tolist(),
+                             color_continuous_scale='RdBu_r',
+                             zmin=-1, zmax=1,
+                             text_auto='.2f',
+                             aspect='auto',
+                             labels={'color': '相关系数'})
+        fig_corr.update_layout(**CHART_LAYOUT, height=340)
+        st.plotly_chart(fig_corr, use_container_width=True)
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
     st.subheader("🔗 RFM 维度相关性")
@@ -647,6 +733,46 @@ elif page == "🎯 K-Means 聚类":
     )
     st.plotly_chart(fig_3d, use_container_width=True)
     st.caption("💡 **解读**: 3D 散点图展示客户在 R/F/M 三维空间中的分布。可旋转查看各簇的空间位置关系——重要价值客户簇 (高频高消费) 位于图上方，流失类簇位于前方 (高 Recency)。簇间存在部分重叠，说明客户群体间边界不是绝对分明的。")
+
+    # 2D 特征空间散点图 (聚类实际发生的空间)
+    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+    st.subheader("📍 特征空间 2D 可视化")
+    st.caption("下图展示聚类**实际使用的特征空间** (非原始 R/F/M)。支持框选 (lasso/box) 查看选中客户的详细信息。")
+
+    plot_2d = transformed_df.copy()
+    plot_2d['聚类标签'] = plot_2d['Cluster'].map(lambda c: f"C{c}: {labels[c]['name']}")
+
+    if len(feature_names) == 2:
+        _fx, _fy = feature_names[0], feature_names[1]
+        _xl = 'R-时效性 (排名)' if _fx == 'R_rank' else _fx
+        _yl = 'RFM-参与度 (综合排名)' if _fy == 'RFM_composite' else _fy
+    else:
+        _fx, _fy = feature_names[0], feature_names[1]
+        _xl, _yl = _fx, _fy
+
+    fig_2d = px.scatter(
+        plot_2d, x=_fx, y=_fy,
+        color='聚类标签',
+        hover_data=['Customer ID', 'Recency', 'Frequency', 'Monetary'],
+        opacity=0.7,
+        color_discrete_sequence=COLORS['palette'],
+        labels={_fx: _xl, _fy: _yl},
+    )
+    fig_2d.update_layout(**CHART_LAYOUT, height=500,
+                         title="聚类特征空间散点图 (支持框选交互)")
+    selection = st.plotly_chart(fig_2d, use_container_width=True, selection_mode="points",
+                                on_select="rerun", key="scatter_2d")
+
+    # 展示框选客户详情
+    sel_events = selection.get('selection', {}).get('points', [])
+    if sel_events:
+        sel_ids = [p.get('customdata', [None])[0] for p in sel_events if p.get('customdata')]
+        sel_customers = rfm_df[rfm_df['Customer ID'].isin(sel_ids)].sort_values('Monetary', ascending=False)
+        if len(sel_customers) > 0:
+            with st.expander(f"📋 已选中 {len(sel_customers)} 位客户 — 点击展开详情", expanded=True):
+                display_sel = sel_customers[['Customer ID', 'Recency', 'Frequency', 'Monetary']].copy()
+                display_sel.columns = ['客户 ID', 'R (天)', 'F (次)', 'M ($)']
+                st.dataframe(display_sel, use_container_width=True, hide_index=True, height=300)
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
