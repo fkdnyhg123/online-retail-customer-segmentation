@@ -351,7 +351,8 @@ elif page == "🔍 数据探索":
         fig_qty = px.histogram(cleaned_df, x='Quantity', nbins=80,
                                color_discrete_sequence=[COLORS['primary']])
         fig_qty.update_layout(**CHART_LAYOUT, height=400, title="订单数量分布",
-                              xaxis_title='购买数量', yaxis_title='订单数')
+                              xaxis_title='购买数量', yaxis_title='订单数',
+                              xaxis=dict(range=[0, cleaned_df['Quantity'].max()]))
         st.plotly_chart(fig_qty, use_container_width=True)
         st.markdown(f"均值: {cleaned_df['Quantity'].mean():.1f} | 中位数: {cleaned_df['Quantity'].median():.0f} | 最大值: {cleaned_df['Quantity'].max()}")
 
@@ -359,7 +360,8 @@ elif page == "🔍 数据探索":
         fig_price = px.histogram(cleaned_df, x='Price', nbins=80,
                                  color_discrete_sequence=[COLORS['secondary']])
         fig_price.update_layout(**CHART_LAYOUT, height=400, title="单价分布",
-                                xaxis_title='单价 (美元 $)', yaxis_title='订单数')
+                                xaxis_title='单价 (美元 $)', yaxis_title='订单数',
+                                xaxis=dict(range=[0, cleaned_df['Price'].max()]))
         st.plotly_chart(fig_price, use_container_width=True)
         st.markdown(f"均值: ${cleaned_df['Price'].mean():.2f} | 中位数: ${cleaned_df['Price'].median():.2f} | 最大值: ${cleaned_df['Price'].max():.2f}")
 
@@ -367,7 +369,8 @@ elif page == "🔍 数据探索":
         fig_rev = px.histogram(cleaned_df, x='Revenue', nbins=80,
                                color_discrete_sequence=[COLORS['success']])
         fig_rev.update_layout(**CHART_LAYOUT, height=400, title="单笔交易收入分布",
-                              xaxis_title='收入 (美元 $)', yaxis_title='订单数')
+                              xaxis_title='收入 (美元 $)', yaxis_title='订单数',
+                              xaxis=dict(range=[0, cleaned_df['Revenue'].max()]))
         st.plotly_chart(fig_rev, use_container_width=True)
 
     # 热销商品
@@ -415,21 +418,24 @@ elif page == "💰 RFM 分析":
         fig_r = px.histogram(rfm_df, x='Recency', nbins=50,
                              color_discrete_sequence=[COLORS['primary']])
         fig_r.update_layout(**CHART_LAYOUT, title="R - 最近购买间隔分布",
-                            xaxis_title='距上次购买 (天)', yaxis_title='客户数', height=360)
+                            xaxis_title='距上次购买 (天)', yaxis_title='客户数', height=360,
+                            xaxis=dict(range=[0, rfm_df['Recency'].max()]))
         st.plotly_chart(fig_r, use_container_width=True)
 
     with col2:
         fig_f = px.histogram(rfm_df, x='Frequency', nbins=50,
                              color_discrete_sequence=[COLORS['danger']])
         fig_f.update_layout(**CHART_LAYOUT, title="F - 购买频率分布",
-                            xaxis_title='订单数', yaxis_title='客户数', height=360)
+                            xaxis_title='订单数', yaxis_title='客户数', height=360,
+                            xaxis=dict(range=[0, rfm_df['Frequency'].max()]))
         st.plotly_chart(fig_f, use_container_width=True)
 
     with col3:
         fig_m = px.histogram(rfm_df, x='Monetary', nbins=50,
                              color_discrete_sequence=[COLORS['success']])
         fig_m.update_layout(**CHART_LAYOUT, title="M - 消费金额分布",
-                            xaxis_title='总消费 ($)', yaxis_title='客户数', height=360)
+                            xaxis_title='总消费 ($)', yaxis_title='客户数', height=360,
+                            xaxis=dict(range=[0, rfm_df['Monetary'].max()]))
         st.plotly_chart(fig_m, use_container_width=True)
 
     st.caption("💡 **解读**: R (最近购买间隔) 呈较均匀的右偏分布，中位数 52 天，说明大多数客户在 2 个月内有购买行为。F (购买频率) 和 M (消费金额) 均呈严重右偏分布，中位数远低于均值——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。这种偏态分布是后续需要做对数变换的原因。")
