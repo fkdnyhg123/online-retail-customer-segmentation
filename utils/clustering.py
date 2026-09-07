@@ -112,12 +112,22 @@ def find_optimal_k(features, k_range: range = range(2, 11), random_state: int = 
 
     best_k = k_values[np.argmax(sil_scores)]
 
+    # 轮廓系数在偏态 RFM 数据上常在 K=2 (活跃/沉睡 二分) 取最大, 但无业务意义;
+    # 故另给一个 K>=3 范围内的推荐值, 供业务粒度选择参考
+    practical = [(k, s) for k, s in zip(k_values, sil_scores) if k >= 3]
+    if practical:
+        recommended_k, recommended_sil = max(practical, key=lambda t: t[1])
+    else:
+        recommended_k, recommended_sil = best_k, max(sil_scores)
+
     return {
         'k_values': k_values,
         'inertia': inertia,
         'silhouette_scores': sil_scores,
         'best_k': best_k,
         'best_silhouette': max(sil_scores),
+        'recommended_k': recommended_k,
+        'recommended_silhouette': recommended_sil,
     }
 
 

@@ -877,28 +877,31 @@ elif page == "🎯 K-Means 聚类":
             marker=dict(size=10, color=COLORS['danger']),
             fill='tozeroy', fillcolor='rgba(220,38,38,0.08)',
         ))
-        best_idx = elbow_result['k_values'].index(elbow_result['best_k'])
+        rec_k = elbow_result['recommended_k']
+        best_idx = elbow_result['k_values'].index(rec_k)
         fig_sil.add_trace(go.Scatter(
-            x=[elbow_result['best_k']], y=[elbow_result['silhouette_scores'][best_idx]],
+            x=[rec_k], y=[elbow_result['silhouette_scores'][best_idx]],
             mode='markers+text',
             marker=dict(size=18, color=COLORS['warning'], symbol='star', line=dict(width=2, color='white')),
-            text=[f'最优 K={elbow_result["best_k"]}'],
+            text=[f'推荐 K={rec_k}'],
             textposition='top center',
-            name=f'最优 K={elbow_result["best_k"]} (轮廓系数: {elbow_result["best_silhouette"]:.4f})'
+            name=f'推荐 K={rec_k} (K≥3 中轮廓系数最高: {elbow_result["recommended_silhouette"]:.4f})'
         ))
         fig_sil.update_layout(**CHART_LAYOUT,
             title="轮廓系数分析 (Silhouette Score)",
             xaxis_title='聚类数 K', yaxis_title='轮廓系数',
             height=400)
         st.plotly_chart(fig_sil, use_container_width=True)
-        st.caption("💡 **轮廓系数**: 衡量簇内紧密度和簇间分离度，取值 -1~1。越高表示簇内样本越紧密、不同簇之间分离越清晰。⭐ 标记为最优 K。")
+        st.caption("💡 **轮廓系数**: 衡量簇内紧密度和簇间分离度，取值 -1~1。越高表示簇内样本越紧密、不同簇之间分离越清晰。⭐ 标记为 K≥3 范围内的推荐 K (K=2 虽系数最高，但只是“活跃/沉睡”的粗略二分，无业务意义)。")
 
-    st.info(f"**推荐 K = {elbow_result['best_k']}** (最高轮廓系数: {elbow_result['best_silhouette']:.4f})，当前选择 **K = {selected_k}**")
+    st.info(f"**K 值选择依据**: 轮廓系数在 K=2 处最高 ({elbow_result['best_silhouette']:.4f})，但那只是把客户粗分成“活跃/沉睡”两类，没有业务价值；"
+            f"在 K≥3 范围内曲线进入平台期 (推荐 K={rec_k}，轮廓系数 {elbow_result['recommended_silhouette']:.4f})，肘部法则拐点也落在 4~5 附近。"
+            f"综合考虑，K=4~6 均合理，本项目取 **K=5** 以对应经典的 RFM 五类业务分群 (重要价值/重要发展/重要保持/新客户/流失类)。当前选择 **K = {selected_k}**。")
 
     with st.expander("🔬 三种方法对比 — 为什么推荐组合特征 2D？(点击展开)"):
         st.markdown("""
         **核心矛盾**: K-Means 依赖欧氏距离，对 F 和 M 的极度右偏极其敏感 (F 偏度 9.98, M 偏度 24.32)。
-        同时 F 和 M 高度相关 (r≈0.8)，在 3D 空间中产生冗余维度，降低簇间分离度。
+        同时 F 和 M 呈中高度正相关 (r≈0.65)，在 3D 空间中产生冗余维度，降低簇间分离度。
 
         **三种方法对比**:
 
