@@ -343,6 +343,22 @@ def stat_cards_row(items):
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
+
+@st.cache_data(show_spinner=False)
+def cached_prepare_and_elbow(_rfm_df, method, winsorize_pct, k_start, k_end):
+    """特征工程 + 最优 K 搜索 (缓存, 避免每次交互重跑)"""
+    scaled, feature_names, scaler, transformed_df = prepare_features(
+        _rfm_df, method=method, winsorize_pct=winsorize_pct)
+    elbow = find_optimal_k(scaled, k_range=range(k_start, k_end + 1))
+    return scaled, feature_names, scaler, transformed_df, elbow
+
+
+@st.cache_data(show_spinner=False)
+def cached_run_kmeans(_rfm_df, n_clusters, method, winsorize_pct):
+    """K-Means 聚类 (缓存, 避免每次交互重跑)"""
+    return run_kmeans(_rfm_df, n_clusters=n_clusters, method=method,
+                      winsorize_pct=winsorize_pct)
+
 # ============================================================
 # 侧边栏导航
 # ============================================================
@@ -830,15 +846,13 @@ elif page == "🎯 K-Means 聚类":
                                        help="将 F/M 超过该分位数的值截断，默认 0.995 (截断 top 0.5%)")
     selected_k = st.sidebar.slider("聚类数量 K", min_value=2, max_value=10, value=5, step=1)
 
-    # 特征准备 (V2: rank 或 log 方法)
-    scaled, feature_names, scaler, transformed_df = prepare_features(
-        rfm_df, method=cluster_method, winsorize_pct=winsorize_pct)
+    # 特征准备 + 最优 K 搜索 (缓存)
+    scaled, feature_names, scaler, transformed_df, elbow_result = cached_prepare_and_elbow(
+        rfm_df, cluster_method, winsorize_pct, k_range_start, k_range_end)
 
     # 最优 K 分析
     st.subheader("📐 第一步: 确定最优聚类数 K")
     col1, col2 = st.columns(2)
-
-    elbow_result = find_optimal_k(scaled, k_range=range(k_range_start, k_range_end + 1))
 
     with col1:
         fig_elbow = go.Figure()
@@ -910,8 +924,7 @@ elif page == "🎯 K-Means 聚类":
 
     # 执行聚类
     st.subheader("🎯 第二步: 聚类结果")
-    result = run_kmeans(rfm_df, n_clusters=selected_k, method=cluster_method,
-                        winsorize_pct=winsorize_pct)
+    result = cached_run_kmeans(rfm_df, selected_k, cluster_method, winsorize_pct)
     profile = result['cluster_profile']
     clustered_df = result['clustered_df']
     labels = get_cluster_labels(profile)
@@ -932,67 +945,51 @@ elif page == "🎯 K-Means 聚类":
     # 3D 分群散点图 (按群单独查看 + 大色块图例 + 簇中心标注)
     st.subheader("🌐 客户 3D 分群可视化")
     plot_df = clustered_df.copy()
-    plot_df['聚类标签'] = plot_df['Cluster'].map(lambda c: f"C{c}: {labels[c]['name']}")
 
     _cids = sorted(labels.keys())
     _all_opts = [f"C{c}: {labels[c]['name']}" for c in _cids]
-    _color_map = {opt: COLORS['palette'][i] for i, opt in enumerate(_all_opts)}
     _def_opt = next((o for o in _all_opts if '重要价值' in o), _all_opts[0])
-
-    _sel_opts = st.multiselect(
-        "查看客户群 (默认单群，可多选叠加对比)",
-        options=_all_opts, default=[_def_opt], key='cluster_view_3d')
-    if not _sel_opts:
-        _sel_opts = [_def_opt]
-    _sel_ids = [int(o.split(':')[0][1:]) for o in _sel_opts]
-    view_df = plot_df[plot_df['Cluster'].isin(_sel_ids)]
-
-    # 大色块图例 (仅显示当前选中的群)
-    _chips = ''.join(
-        f'<span style="display:inline-flex;align-items:center;margin-right:22px;">'
-        f'<span style="width:20px;height:20px;border-radius:5px;background:{_color_map[o]};'
-        f'display:inline-block;margin-right:8px;"></span>'
-        f'<span style="font-size:16px;font-weight:600;color:#1f2937;">{o}</span></span>'
-        for o in _all_opts if o in _sel_opts)
-    st.markdown(f'<div style="margin:2px 0 10px 0;">{_chips}</div>', unsafe_allow_html=True)
 
     # 各轴截断到 99 分位, 防止极端离群值把主云团压成一小团
     _cap = {c: float(plot_df[c].quantile(0.99)) for c in ['Recency', 'Frequency', 'Monetary']}
-    view_df = view_df.copy()
     for _c in _cap:
-        view_df[_c] = view_df[_c].clip(upper=_cap[_c])
+        plot_df[_c] = plot_df[_c].clip(upper=_cap[_c])
 
-    fig_3d = px.scatter_3d(
-        view_df, x='Recency', y='Frequency', z='Monetary',
-        color='聚类标签',
-        hover_data=['Customer ID'],
-        opacity=0.75,
-        labels={'Recency': 'R-最近购买 (天)', 'Frequency': 'F-购买频率', 'Monetary': 'M-消费金额 (美元)'},
-        color_discrete_map=_color_map,
-    )
-    fig_3d.update_traces(marker=dict(size=5, line=dict(width=0)), showlegend=False)
+    # 每个客户群一条 trace (点 + 该群中心菱形/群名), 底部图例点击即可显示/隐藏;
+    # 默认仅显示一个群, 其余 legendonly (点了才显示); 图例切换为浏览器端操作, 不重跑后端
+    fig_3d = go.Figure()
+    for _i, _cid in enumerate(_cids):
+        _opt = _all_opts[_i]
+        _sub = plot_df[plot_df['Cluster'] == _cid]
+        _n = len(_sub)
+        _cx = float(_sub['Recency'].mean())
+        _cy = float(_sub['Frequency'].mean())
+        _cz = float(_sub['Monetary'].mean())
+        fig_3d.add_trace(go.Scatter3d(
+            x=list(_sub['Recency']) + [_cx],
+            y=list(_sub['Frequency']) + [_cy],
+            z=list(_sub['Monetary']) + [_cz],
+            mode='markers+text',
+            marker=dict(
+                size=[5] * _n + [14],
+                symbol=['circle'] * _n + ['diamond'],
+                color=COLORS['palette'][_i],
+                opacity=0.75,
+                line=dict(width=0.5, color='white'),
+            ),
+            text=[''] * _n + [labels[_cid]['name']],
+            textposition='top center',
+            textfont=dict(size=16, color='#111827'),
+            customdata=[[str(v)] for v in _sub['Customer ID']] + [[labels[_cid]['name'] + ' (群中心)']],
+            hovertemplate='客户 %{customdata[0]}<br>R=%{x:.0f} 天 / F=%{y:.0f} 次 / M=%{z:,.0f} 美元<extra>' + _opt + '</extra>',
+            name=_opt,
+            showlegend=True,
+            visible=True if _opt == _def_opt else 'legendonly',
+        ))
 
-    # 簇中心: 大菱形 + 群名文字, 直接标在 3D 空间里
-    _cent = view_df.groupby('Cluster')[['Recency', 'Frequency', 'Monetary']].mean()
-    fig_3d.add_trace(go.Scatter3d(
-        x=[float(_cent.loc[c, 'Recency']) for c in _sel_ids],
-        y=[float(_cent.loc[c, 'Frequency']) for c in _sel_ids],
-        z=[float(_cent.loc[c, 'Monetary']) for c in _sel_ids],
-        mode='markers+text',
-        marker=dict(size=14, symbol='diamond', color='#111827',
-                    line=dict(width=2, color='white')),
-        text=[labels[c]['name'] for c in _sel_ids],
-        textposition='top center',
-        textfont=dict(size=16, color='#111827'),
-        hoverinfo='text',
-        showlegend=False,
-        name='簇中心',
-    ))
-
-    fig_3d.update_layout(**CHART_LAYOUT, height=800)
+    fig_3d.update_layout(**CHART_LAYOUT, height=680)
     fig_3d.update_layout(
         margin=dict(l=10, r=10, t=30, b=10),
-        showlegend=False,
         scene=dict(
             xaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
                        title='R-最近购买 (天)', range=[0, _cap['Recency']]),
@@ -1005,6 +1002,8 @@ elif page == "🎯 K-Means 聚类":
             aspectratio=dict(x=1.35, y=1.35, z=1.0),
             camera=dict(eye=dict(x=1.5, y=-1.5, z=0.8)),
         ),
+        legend=dict(orientation='h', yanchor='top', y=-0.02, xanchor='center', x=0.5,
+                    font=dict(size=15), itemsizing='constant'),
     )
     st.plotly_chart(fig_3d, use_container_width=True)
 
