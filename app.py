@@ -178,8 +178,23 @@ CHART_LAYOUT = dict(
 # ============================================================
 @st.cache_data(show_spinner="正在加载数据集，请稍候...")
 def load_and_clean(filepath):
-    raw_df = load_raw_data(filepath)
-    cleaned_df = clean_data(raw_df)
+    _dir = os.path.dirname(filepath)
+    _raw_pq = os.path.join(_dir, '.cache_raw.parquet')
+    _clean_pq = os.path.join(_dir, '.cache_cleaned.parquet')
+
+    # Parquet 缓存: 首次从 Excel 读取后存为 Parquet，后续直接读 Parquet (快 10-20x)
+    if os.path.exists(_raw_pq) and os.path.exists(_clean_pq):
+        raw_df = pd.read_parquet(_raw_pq)
+        cleaned_df = pd.read_parquet(_clean_pq)
+    else:
+        raw_df = load_raw_data(filepath)
+        cleaned_df = clean_data(raw_df)
+        try:
+            raw_df.to_parquet(_raw_pq, index=False, engine='pyarrow')
+            cleaned_df.to_parquet(_clean_pq, index=False, engine='pyarrow')
+        except Exception:
+            pass  # 如果 pyarrow 不可用则跳过缓存
+
     quality_report = get_data_quality_report(raw_df)
     cleaned_quality = get_data_quality_report(cleaned_df)
     cleaning_summary = get_cleaning_summary(raw_df, cleaned_df)
@@ -397,30 +412,37 @@ elif page == "🔍 数据探索":
     tab1, tab2, tab3 = st.tabs(["数量 (Quantity)", "单价 (Price)", "收入 (Revenue)"])
 
     with tab1:
-        fig_qty = px.histogram(explore_df, x='Quantity', nbins=80,
+        _q90 = explore_df['Quantity'].quantile(0.90)
+        fig_qty = px.histogram(explore_df, x='Quantity', nbins=50,
                                color_discrete_sequence=[COLORS['primary']])
         fig_qty.update_layout(**CHART_LAYOUT, height=400, title="订单数量分布",
                               xaxis_title='购买数量', yaxis_title='订单数',
-                              xaxis=dict(range=[0, explore_df['Quantity'].quantile(0.95) * 1.1]))
+                              xaxis=dict(range=[0, _q90 * 1.1]))
         st.plotly_chart(fig_qty, use_container_width=True)
-        st.markdown(f"均值: {explore_df['Quantity'].mean():.1f} | 中位数: {explore_df['Quantity'].median():.0f} | 最大值: {explore_df['Quantity'].max()}")
+        _p25, _p50, _p75, _p95 = explore_df['Quantity'].quantile([0.25, 0.5, 0.75, 0.95])
+        st.markdown(f"P25: **{_p25:.0f}** · 中位数: **{_p50:.0f}** · P75: **{_p75:.0f}** · P95: **{_p95:.0f}** · 最大值: {explore_df['Quantity'].max()}")
 
     with tab2:
-        fig_price = px.histogram(explore_df, x='Price', nbins=80,
+        _pq90 = explore_df['Price'].quantile(0.90)
+        fig_price = px.histogram(explore_df, x='Price', nbins=50,
                                  color_discrete_sequence=[COLORS['secondary']])
         fig_price.update_layout(**CHART_LAYOUT, height=400, title="单价分布",
                                 xaxis_title='单价 (美元 $)', yaxis_title='订单数',
-                                xaxis=dict(range=[0, explore_df['Price'].quantile(0.95) * 1.1]))
+                                xaxis=dict(range=[0, _pq90 * 1.1]))
         st.plotly_chart(fig_price, use_container_width=True)
-        st.markdown(f"均值: ${explore_df['Price'].mean():.2f} | 中位数: ${explore_df['Price'].median():.2f} | 最大值: ${explore_df['Price'].max():.2f}")
+        _p25, _p50, _p75, _p95 = explore_df['Price'].quantile([0.25, 0.5, 0.75, 0.95])
+        st.markdown(f"P25: **${_p25:.2f}** · 中位数: **${_p50:.2f}** · P75: **${_p75:.2f}** · P95: **${_p95:.2f}** · 最大值: ${explore_df['Price'].max():.2f}")
 
     with tab3:
-        fig_rev = px.histogram(explore_df, x='Revenue', nbins=80,
+        _rq90 = explore_df['Revenue'].quantile(0.90)
+        fig_rev = px.histogram(explore_df, x='Revenue', nbins=50,
                                color_discrete_sequence=[COLORS['success']])
         fig_rev.update_layout(**CHART_LAYOUT, height=400, title="单笔交易收入分布",
                               xaxis_title='收入 (美元 $)', yaxis_title='订单数',
-                              xaxis=dict(range=[0, explore_df['Revenue'].quantile(0.95) * 1.1]))
+                              xaxis=dict(range=[0, _rq90 * 1.1]))
         st.plotly_chart(fig_rev, use_container_width=True)
+        _p25, _p50, _p75, _p95 = explore_df['Revenue'].quantile([0.25, 0.5, 0.75, 0.95])
+        st.markdown(f"P25: **${_p25:.2f}** · 中位数: **${_p50:.2f}** · P75: **${_p75:.2f}** · P95: **${_p95:.2f}** · 最大值: ${explore_df['Revenue'].max():.2f}")
 
     # 热销商品
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -465,27 +487,30 @@ elif page == "💰 RFM 分析":
     # R/F/M 分布
     col1, col2, col3 = st.columns(3)
     with col1:
-        fig_r = px.histogram(rfm_df, x='Recency', nbins=50,
+        _rq90 = rfm_df['Recency'].quantile(0.90)
+        fig_r = px.histogram(rfm_df, x='Recency', nbins=40,
                              color_discrete_sequence=[COLORS['primary']])
         fig_r.update_layout(**CHART_LAYOUT, title="R - 最近购买间隔分布",
                             xaxis_title='距上次购买 (天)', yaxis_title='客户数', height=360,
-                            xaxis=dict(range=[0, rfm_df['Recency'].quantile(0.95) * 1.1]))
+                            xaxis=dict(range=[0, _rq90 * 1.1]))
         st.plotly_chart(fig_r, use_container_width=True)
 
     with col2:
-        fig_f = px.histogram(rfm_df, x='Frequency', nbins=50,
+        _fq90 = rfm_df['Frequency'].quantile(0.90)
+        fig_f = px.histogram(rfm_df, x='Frequency', nbins=40,
                              color_discrete_sequence=[COLORS['danger']])
         fig_f.update_layout(**CHART_LAYOUT, title="F - 购买频率分布",
                             xaxis_title='订单数', yaxis_title='客户数', height=360,
-                            xaxis=dict(range=[0, rfm_df['Frequency'].quantile(0.95) * 1.1]))
+                            xaxis=dict(range=[0, _fq90 * 1.1]))
         st.plotly_chart(fig_f, use_container_width=True)
 
     with col3:
-        fig_m = px.histogram(rfm_df, x='Monetary', nbins=50,
+        _mq90 = rfm_df['Monetary'].quantile(0.90)
+        fig_m = px.histogram(rfm_df, x='Monetary', nbins=40,
                              color_discrete_sequence=[COLORS['success']])
         fig_m.update_layout(**CHART_LAYOUT, title="M - 消费金额分布",
                             xaxis_title='总消费 ($)', yaxis_title='客户数', height=360,
-                            xaxis=dict(range=[0, rfm_df['Monetary'].quantile(0.95) * 1.1]))
+                            xaxis=dict(range=[0, _mq90 * 1.1]))
         st.plotly_chart(fig_m, use_container_width=True)
 
     st.caption("💡 **解读**: R (最近购买间隔) 呈较均匀的右偏分布，中位数 52 天，说明大多数客户在 2 个月内有购买行为。F (购买频率) 和 M (消费金额) 均呈严重右偏分布，中位数远低于均值——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。这种偏态分布是后续需要做对数变换的原因。")
