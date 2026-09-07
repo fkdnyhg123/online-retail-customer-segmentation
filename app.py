@@ -261,6 +261,46 @@ def compute_top_products(_df, top_n):
     tp['商品名称'] = tp.apply(lambda r: f"{r['Description']}  ({r['StockCode']})", axis=1)
     return tp
 
+@st.cache_data(show_spinner=False)
+def compute_rfm_segments(_rfm_df):
+    """计算 R/F/M 的分段统计 (缓存)"""
+    configs = {
+        'Recency': {
+            'bins': [0, 7, 14, 30, 60, 120, 200, float('inf')],
+            'labels': ['1-7天', '8-14天', '15-30天', '31-60天', '61-120天', '121-200天', '200+天'],
+            'xaxis_title': '距上次购买 (天)', 'title': 'R - 最近购买间隔分布',
+            'color': COLORS['primary'], 'fmt': '{:.0f}天',
+        },
+        'Frequency': {
+            'bins': [0, 1, 2, 5, 10, 20, float('inf')],
+            'labels': ['1次', '2次', '3-5次', '6-10次', '11-20次', '20+次'],
+            'xaxis_title': '订单数', 'title': 'F - 购买频率分布',
+            'color': COLORS['danger'], 'fmt': '{:.0f}次',
+        },
+        'Monetary': {
+            'bins': [0, 200, 500, 1000, 2000, 5000, float('inf')],
+            'labels': ['$0-200', '$200-500', '$500-1K', '$1K-2K', '$2K-5K', '$5K+'],
+            'xaxis_title': '总消费 ($)', 'title': 'M - 消费金额分布',
+            'color': COLORS['success'], 'fmt': '${:.0f}',
+        },
+    }
+    results = {}
+    for col, cfg in configs.items():
+        s = _rfm_df[col]
+        counts = pd.cut(s, bins=cfg['bins'], labels=cfg['labels'], right=True).value_counts().sort_index()
+        total = len(s)
+        pcts = (counts / total * 100).round(1)
+        quantiles = s.quantile([0.25, 0.5, 0.75, 0.90])
+        results[col] = {
+            'labels': cfg['labels'], 'counts': counts.tolist(), 'pcts': pcts.tolist(),
+            'p25': float(quantiles[0.25]), 'p50': float(quantiles[0.5]),
+            'p75': float(quantiles[0.75]), 'p90': float(quantiles[0.90]),
+            'mean': float(s.mean()), 'max': float(s.max()),
+            'xaxis_title': cfg['xaxis_title'], 'title': cfg['title'],
+            'color': cfg['color'], 'fmt': cfg['fmt'],
+        }
+    return results
+
 # ============================================================
 # 侧边栏导航
 # ============================================================
@@ -560,36 +600,40 @@ elif page == "💰 RFM 分析":
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
-    # R/F/M 分布
+    # R/F/M 分布 (分段统计图)
+    rfm_seg = compute_rfm_segments(rfm_df)
     col1, col2, col3 = st.columns(3)
-    with col1:
-        _rq90 = rfm_df['Recency'].quantile(0.90)
-        fig_r = px.histogram(rfm_df, x='Recency', nbins=40,
-                             color_discrete_sequence=[COLORS['primary']])
-        fig_r.update_layout(**CHART_LAYOUT, title="R - 最近购买间隔分布",
-                            xaxis_title='距上次购买 (天)', yaxis_title='客户数', height=360,
-                            xaxis=dict(range=[0, _rq90 * 1.1]))
-        st.plotly_chart(fig_r, use_container_width=True)
+    for mc, dim in zip([col1, col2, col3], ['Recency', 'Frequency', 'Monetary']):
+        with mc:
+            info = rfm_seg[dim]
+            fig_seg = px.bar(
+                x=info['labels'], y=info['counts'],
+                color=info['counts'],
+                color_continuous_scale=[info['color'] + '66', info['color']],
+                labels={'x': info['xaxis_title'], 'y': '客户数'},
+            )
+            fig_seg.update_traces(
+                text=[f"{p}%" for p in info['pcts']],
+                textposition='outside',
+                textfont=dict(size=12, color='#333'),
+                hovertemplate=f'{info["xaxis_title"]}'+'=%{x}<br>客户数=%{y:,.0f}<br>占比=%{text}<extra></extra>'
+            )
+            fig_seg.update_layout(
+                **CHART_LAYOUT, height=380, title=info['title'],
+                showlegend=False, coloraxis_showscale=False,
+                xaxis=dict(tickfont=dict(size=11)),
+                yaxis=dict(title='客户数'),
+            )
+            st.plotly_chart(fig_seg, use_container_width=True)
+            fmt = info['fmt']
+            st.markdown(
+                f"中位数: **{fmt.format(info['p50'])}** · "
+                f"均值: **{fmt.format(info['mean'])}** · "
+                f"P75: **{fmt.format(info['p75'])}** · "
+                f"P90: **{fmt.format(info['p90'])}**"
+            )
 
-    with col2:
-        _fq90 = rfm_df['Frequency'].quantile(0.90)
-        fig_f = px.histogram(rfm_df, x='Frequency', nbins=40,
-                             color_discrete_sequence=[COLORS['danger']])
-        fig_f.update_layout(**CHART_LAYOUT, title="F - 购买频率分布",
-                            xaxis_title='订单数', yaxis_title='客户数', height=360,
-                            xaxis=dict(range=[0, _fq90 * 1.1]))
-        st.plotly_chart(fig_f, use_container_width=True)
-
-    with col3:
-        _mq90 = rfm_df['Monetary'].quantile(0.90)
-        fig_m = px.histogram(rfm_df, x='Monetary', nbins=40,
-                             color_discrete_sequence=[COLORS['success']])
-        fig_m.update_layout(**CHART_LAYOUT, title="M - 消费金额分布",
-                            xaxis_title='总消费 ($)', yaxis_title='客户数', height=360,
-                            xaxis=dict(range=[0, _mq90 * 1.1]))
-        st.plotly_chart(fig_m, use_container_width=True)
-
-    st.caption("💡 **解读**: R (最近购买间隔) 呈较均匀的右偏分布，中位数 52 天，说明大多数客户在 2 个月内有购买行为。F (购买频率) 和 M (消费金额) 均呈严重右偏分布，中位数远低于均值——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。这种偏态分布是后续需要做对数变换的原因。")
+    st.caption("💡 **解读**: R (最近购买间隔) 中位数 52 天，大多数客户在 2 个月内有购买行为。F (购买频率) 以 1-2 次为主，M (消费金额) 以 $200-500 为主——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。这种偏态分布是后续需要做对数变换的原因。")
 
     # RFM 相关性矩阵
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
