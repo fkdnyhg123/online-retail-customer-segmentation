@@ -323,11 +323,9 @@ if page == "📈 数据概览":
     st.title("📈 数据概览")
     st.markdown("UCI Online Retail II — 英国在线零售商店交易数据")
 
-    # ---- 第一周任务: 数据基础探索 ----
-    st.subheader("📋 第一周: 数据理解与基础探索")
+    # ---- 数据基础探索 ----
+    st.subheader("📋 数据理解与基础探索")
     st.markdown("""
-    > **任务目标**: 加载原始数据，执行基础探索 (`df.info()`, `df.head()`, `df.describe()`, `df.isnull()`)，识别数据质量问题，形成初步观察。
-    
     **数据集来源**: UCI 机器学习仓库 — Online Retail II (ID: 502)，包含一家英国在线零售商 2009.12 至 2010.12 的全部交易记录。
     **8 个字段**: Invoice (发票号), StockCode (商品编码), Description (商品描述), Quantity (数量), InvoiceDate (日期), Price (单价), Customer ID (客户ID), Country (国家)。
     """)
@@ -406,6 +404,33 @@ if page == "📈 数据概览":
         st.metric("移除", f"{cleaning_summary['removed_rows']:,} 条")
     with col_d:
         st.metric("移除比例", f"{cleaning_summary['removal_pct']}%")
+
+    # 清洗前后对比图
+    st.markdown("#### 📊 清洗前后质量问题对比")
+    _issue_labels = ['取消订单', '缺失客户ID', '负数量', '零/负价格', '精确重复', '非商品编码']
+    _before = [quality_report['cancelled_orders'], quality_report['missing_customer_id'],
+               quality_report['negative_quantity'], quality_report['zero_neg_price'],
+               quality_report['exact_duplicates'], quality_report['special_stockcodes']]
+    _after = [cleaned_quality['cancelled_orders'], cleaned_quality['missing_customer_id'],
+              cleaned_quality['negative_quantity'], cleaned_quality['zero_neg_price'],
+              cleaned_quality['exact_duplicates'], cleaned_quality['special_stockcodes']]
+    _compare_df = pd.DataFrame({
+        '问题类型': _issue_labels * 2,
+        '数量': _before + _after,
+        '阶段': ['清洗前'] * 6 + ['清洗后'] * 6,
+    })
+    fig_compare = px.bar(_compare_df, x='问题类型', y='数量', color='阶段',
+                         barmode='group',
+                         color_discrete_map={'清洗前': COLORS['danger'], '清洗后': COLORS['success']},
+                         labels={'数量': '问题数量 (条)', '问题类型': '', '阶段': ''})
+    fig_compare.update_traces(textposition='outside', textfont=dict(size=11))
+    fig_compare.update_layout(
+        **CHART_LAYOUT, height=380,
+        title="各类型质量问题: 清洗前 vs 清洗后",
+        xaxis=dict(tickfont=dict(size=12)),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5),
+    )
+    st.plotly_chart(fig_compare, use_container_width=True)
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -623,8 +648,8 @@ elif page == "💰 RFM 分析":
                 showlegend=False, coloraxis_showscale=False,
                 xaxis=dict(tickfont=dict(size=11)),
                 yaxis=dict(title='客户数'),
-                margin=dict(l=50, r=10, t=50, b=60),
             )
+            fig_seg.update_layout(margin=dict(l=50, r=10, t=50, b=60))
             st.plotly_chart(fig_seg, use_container_width=True)
 
     # R/F/M 统计卡片 (每个维度一行4个卡片)
