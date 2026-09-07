@@ -929,57 +929,74 @@ elif page == "🎯 K-Means 聚类":
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
-    # 平行坐标图 (替代 3D 散点: 静态、易读、可对比各簇在 R/F/M 上的差异)
-    st.subheader("🧭 客户分群平行坐标图")
-    st.caption("每条竖轴代表一个 RFM 维度，每束彩色折线代表一个客户群。无需旋转即可对比各群在 R/F/M 上的高低差异——例如重要价值客户束在 F、M 轴上明显偏高，流失类客户束在 R 轴上偏高。")
+    # 3D 分群散点图 (优化可读性: 轴截断 + 小点降重叠 + 簇中心标注)
+    st.subheader("🌐 客户 3D 分群可视化")
+    st.caption("三个轴分别代表 **R** (最近购买天数)、**F** (购买次数)、**M** (消费金额)。每种颜色是一个客户群，**黑色菱形 + 文字** 标出该群的中心位置，一眼即可分辨每团是谁。为避免极少数超高消费客户把坐标轴拉得过长，各轴已截断到前 99% 的范围，超出部分贴边显示。")
     plot_df = clustered_df.copy()
+    plot_df['聚类标签'] = plot_df['Cluster'].map(lambda c: f"C{c}: {labels[c]['name']}")
 
+    # 各轴截断到 99 分位, 防止极端离群值把主云团压成一小团
+    _cap = {c: float(plot_df[c].quantile(0.99)) for c in ['Recency', 'Frequency', 'Monetary']}
+    for _c in _cap:
+        plot_df[_c] = plot_df[_c].clip(upper=_cap[_c])
+
+    fig_3d = px.scatter_3d(
+        plot_df, x='Recency', y='Frequency', z='Monetary',
+        color='聚类标签',
+        hover_data=['Customer ID'],
+        opacity=0.6,
+        labels={'Recency': 'R-最近购买 (天)', 'Frequency': 'F-购买频率', 'Monetary': 'M-消费金额 (美元)'},
+        color_discrete_sequence=COLORS['palette'],
+    )
+    fig_3d.update_traces(marker=dict(size=3, line=dict(width=0)))
+
+    # 簇中心: 大菱形 + 群名文字, 直接标在 3D 空间里
+    _cent = plot_df.groupby('Cluster')[['Recency', 'Frequency', 'Monetary']].mean()
     _cids = sorted(labels.keys())
-    _n = len(_cids)
-    _pal = COLORS['palette'][:_n]
-    _cmap = {cid: i for i, cid in enumerate(_cids)}
-    # 硬边界离散色带: 每个簇占一段, 避免连续插值混色
-    _cs = []
-    for i, c in enumerate(_pal):
-        _cs.append([i / _n, c])
-        _cs.append([(i + 1) / _n, c])
-    _color_vals = plot_df['Cluster'].map(_cmap).astype(float) + 0.5
-
-    # 各轴按 1~99 分位裁剪, 防止极端离群值把折线压到一端
-    def _pc_range(col):
-        lo = float(plot_df[col].quantile(0.01))
-        hi = float(plot_df[col].quantile(0.99))
-        return [lo, hi if hi > lo else lo + 1]
-
-    _dims = [
-        dict(label='R-最近购买 (天)', values=plot_df['Recency'].tolist(), range=_pc_range('Recency')),
-        dict(label='F-购买频率', values=plot_df['Frequency'].tolist(), range=_pc_range('Frequency')),
-        dict(label='M-消费金额 (美元)', values=plot_df['Monetary'].tolist(), range=_pc_range('Monetary')),
-    ]
-    fig_pc = go.Figure(go.Parcoords(
-        line=dict(
-            color=_color_vals.tolist(), colorscale=_cs, cmin=0, cmax=_n,
-            showscale=True,
-            colorbar=dict(
-                tickvals=[i + 0.5 for i in range(_n)],
-                ticktext=[f"C{cid}: {labels[cid]['name']}" for cid in _cids],
-                thickness=14, len=0.85,
-                tickfont=dict(size=11),
-            ),
-        ),
-        dimensions=_dims,
+    fig_3d.add_trace(go.Scatter3d(
+        x=[float(_cent.loc[c, 'Recency']) for c in _cids],
+        y=[float(_cent.loc[c, 'Frequency']) for c in _cids],
+        z=[float(_cent.loc[c, 'Monetary']) for c in _cids],
+        mode='markers+text',
+        marker=dict(size=9, symbol='diamond', color='#111827',
+                    line=dict(width=1.5, color='white')),
+        text=[labels[c]['name'] for c in _cids],
+        textposition='top center',
+        textfont=dict(size=12, color='#111827'),
+        hoverinfo='text',
+        showlegend=False,
+        name='簇中心',
     ))
-    fig_pc.update_layout(**CHART_LAYOUT, height=520)
-    fig_pc.update_layout(margin=dict(l=60, r=40, t=30, b=30))
-    st.plotly_chart(fig_pc, use_container_width=True)
-    st.caption("💡 **解读**: 平行坐标图把三维分群投影到平面上，每束折线在三个竖轴上的走向揭示该群体的行为特征。折线束越分散说明簇间边界越模糊；某束在 F/M 轴上一路走高即为高频高消费的重要价值客户，在 R 轴上走高则为长期未购买的流失类客户。")
+
+    fig_3d.update_layout(**CHART_LAYOUT, height=620)
+    fig_3d.update_layout(
+        scene=dict(
+            xaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
+                       title='R-最近购买 (天)', range=[0, _cap['Recency']]),
+            yaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
+                       title='F-购买频率', range=[0, _cap['Frequency']]),
+            zaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
+                       title='M-消费金额 (美元)', range=[0, _cap['Monetary']]),
+            bgcolor='white',
+            camera=dict(eye=dict(x=1.7, y=-1.7, z=0.9)),
+        ),
+        legend=dict(title=dict(text='客户群'), orientation='v',
+                    yanchor='top', y=0.95, xanchor='left', x=1.02),
+    )
+    st.plotly_chart(fig_3d, use_container_width=True)
+    st.caption("💡 **解读**: 3D 散点把每个客户按 R/F/M 放进空间，同色点聚成一团即一个客户群。靠近 **F、M 轴高处** 的团是高频高消费的重要价值客户；靠近 **R 轴远处** (很久没买) 的团是流失/沉睡类客户。黑色菱形标出各群中心，两团中心距离越远说明这两类客户差异越明显。可拖拽旋转、滚轮缩放查看不同角度。")
 
     # 2D 特征空间散点图 (聚类实际发生的空间)
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
     st.subheader("📍 特征空间 2D 可视化")
     st.caption("下图展示聚类**实际使用的特征空间** (非原始 R/F/M)。支持框选 (lasso/box) 查看选中客户的详细信息。")
 
-    plot_2d = transformed_df.copy()
+    plot_2d = transformed_df.reset_index(drop=True).copy()
+    # transformed_df 仅含工程特征列, 需按行序从 clustered_df 补回 Cluster / Customer ID / 原始 R F M
+    _src = clustered_df[['Customer ID', 'Cluster', 'Recency', 'Frequency', 'Monetary']].reset_index(drop=True)
+    for _col in _src.columns:
+        if _col not in plot_2d.columns:
+            plot_2d[_col] = _src[_col]
     plot_2d['聚类标签'] = plot_2d['Cluster'].map(lambda c: f"C{c}: {labels[c]['name']}")
 
     if len(feature_names) == 2:
