@@ -623,15 +623,24 @@ elif page == "💰 RFM 分析":
                 showlegend=False, coloraxis_showscale=False,
                 xaxis=dict(tickfont=dict(size=11)),
                 yaxis=dict(title='客户数'),
+                margin=dict(l=50, r=10, t=50, b=60),
             )
             st.plotly_chart(fig_seg, use_container_width=True)
-            fmt = info['fmt']
-            st.markdown(
-                f"中位数: **{fmt.format(info['p50'])}** · "
-                f"均值: **{fmt.format(info['mean'])}** · "
-                f"上四分位: **{fmt.format(info['p75'])}** · "
-                f"前10%阈值: **{fmt.format(info['p90'])}**"
-            )
+
+    # R/F/M 统计卡片 (每个维度一行4个卡片)
+    _rfm_dim_labels = {'Recency': '🕐 最近购买间隔', 'Frequency': '🔄 购买频率', 'Monetary': '💰 消费金额'}
+    for dim in ['Recency', 'Frequency', 'Monetary']:
+        info = rfm_seg[dim]
+        fmt = info['fmt']
+        st.markdown(f"**{_rfm_dim_labels[dim]}**")
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        for mc, label, val in [
+            (mc1, '中位数', fmt.format(info['p50'])),
+            (mc2, '均值', fmt.format(info['mean'])),
+            (mc3, '上四分位', fmt.format(info['p75'])),
+            (mc4, '前10%阈值', fmt.format(info['p90'])),
+        ]:
+            mc.markdown(f'<div class="metric-card-wide"><p>{label}</p><h3>{val}</h3></div>', unsafe_allow_html=True)
 
     st.caption("💡 **解读**: R (最近购买间隔) 中位数 52 天，大多数客户在 2 个月内有购买行为。F (购买频率) 以 1-2 次为主，M (消费金额) 以 $200-500 为主——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。这种偏态分布是后续需要做对数变换的原因。")
 
@@ -641,7 +650,7 @@ elif page == "💰 RFM 分析":
     with col_corr1:
         st.subheader("🔗 RFM 相关性矩阵")
         st.markdown("""
-        F (频率) 和 M (金额) 高度相关 (r≈0.8)，说明买得多的客户也花得多。
+        F (频率) 和 M (金额) 呈中等正相关 (r≈0.65)，说明买得多的客户也倾向于花得多。
         这一相关性是后续聚类中将 F/M 合并为 composite 特征的理论依据。
         """)
     with col_corr2:
@@ -661,27 +670,48 @@ elif page == "💰 RFM 分析":
         st.plotly_chart(fig_corr, use_container_width=True)
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-    st.subheader("🔗 RFM 维度相关性")
-    col1, col2 = st.columns(2)
-    with col1:
-        fig_rf = px.scatter(rfm_df, x='Frequency', y='Recency',
-                            size='Monetary', color='Monetary',
-                            color_continuous_scale='Viridis',
-                            hover_data=['Customer ID'], opacity=0.6)
-        fig_rf.update_layout(**CHART_LAYOUT, title="频率 vs 最近购买 (气泡大小/颜色 = 消费金额)",
-                             xaxis_title='购买频率 (次)', yaxis_title='最近购买间隔 (天)', height=450)
-        st.plotly_chart(fig_rf, use_container_width=True)
+    st.subheader("🔗 RFM 维度相关性 (联动)")
+    st.caption("💡 在任一图中框选或点击气泡，另一张图会高亮同一批客户。")
 
-    with col2:
-        fig_fm = px.scatter(rfm_df, x='Frequency', y='Monetary',
-                            size='Recency', color='Recency',
-                            color_continuous_scale='RdYlGn_r',
-                            hover_data=['Customer ID'], opacity=0.6)
-        fig_fm.update_layout(**CHART_LAYOUT, title="频率 vs 消费金额 (气泡大小/颜色 = 最近购买)",
-                             xaxis_title='购买频率 (次)', yaxis_title='消费金额 ($)', height=450)
-        st.plotly_chart(fig_fm, use_container_width=True)
+    _sel_left = st.plotly_chart(
+        px.scatter(rfm_df, x='Frequency', y='Recency',
+                   size='Monetary', color='Monetary',
+                   color_continuous_scale='Viridis',
+                   custom_data=['Customer ID'], opacity=0.6)
+        .update_layout(**CHART_LAYOUT, title="频率 vs 最近购买 (气泡大小/颜色 = 消费金额)",
+                       xaxis_title='购买频率 (次)', yaxis_title='最近购买间隔 (天)', height=450),
+        use_container_width=True, selection_mode="points", on_select="rerun", key="rfm_scatter_left"
+    )
+    _sel_right = st.plotly_chart(
+        px.scatter(rfm_df, x='Frequency', y='Monetary',
+                   size='Recency', color='Recency',
+                   color_continuous_scale='RdYlGn_r',
+                   custom_data=['Customer ID'], opacity=0.6)
+        .update_layout(**CHART_LAYOUT, title="频率 vs 消费金额 (气泡大小/颜色 = 最近购买)",
+                       xaxis_title='购买频率 (次)', yaxis_title='消费金额 ($)', height=450),
+        use_container_width=True, selection_mode="points", on_select="rerun", key="rfm_scatter_right"
+    )
 
-    st.caption("💡 **解读**: 左图 (频率 vs 最近购买) 中气泡大小和颜色代表消费金额，可见高频客户 (右侧) 消费金额更高且购买更近期。右图 (频率 vs 消费金额) 显示频率和金额正相关，但少量极端客户 (右上角) 的消费金额远超其他客户，进一步验证了偏态分布。")
+    # 收集选中的客户 ID
+    _selected_ids = set()
+    for _sel in [_sel_left, _sel_right]:
+        _pts = _sel.get('selection', {}).get('points', [])
+        for _p in _pts:
+            _cid = _p.get('customdata', [None])[0]
+            if _cid is not None:
+                _selected_ids.add(str(_cid))
+
+    if _selected_ids:
+        st.info(f"✅ 已选中 **{len(_selected_ids)}** 位客户")
+        _sel_df = rfm_df[rfm_df['Customer ID'].astype(str).isin(_selected_ids)].sort_values('Monetary', ascending=False)
+        _sc1, _sc2, _sc3 = st.columns(3)
+        _sc1.metric("选中客户数", f"{len(_sel_df)}")
+        _sc2.metric("平均频率", f"{_sel_df['Frequency'].mean():.1f} 次")
+        _sc3.metric("平均消费", f"{_sel_df['Monetary'].mean():.0f} 美元")
+        st.dataframe(_sel_df[['Customer ID', 'Recency', 'Frequency', 'Monetary']].head(20),
+                     use_container_width=True, hide_index=True)
+    else:
+        st.caption("💡 **解读**: 左图 (频率 vs 最近购买) 中气泡大小和颜色代表消费金额，可见高频客户 (右侧) 消费金额更高且购买更近期。右图 (频率 vs 消费金额) 显示频率和金额正相关，但少量极端客户 (右上角) 的消费金额远超其他客户，进一步验证了偏态分布。")
 
     # RFM 分数分群
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -717,6 +747,33 @@ elif page == "💰 RFM 分析":
     fig_seg.update_layout(**CHART_LAYOUT, height=420, xaxis_tickangle=-25,
                           xaxis_title='', yaxis_title='客户数量')
     st.plotly_chart(fig_seg, use_container_width=True)
+
+    with st.expander("📋 查看分类依据 (评分规则)"):
+        st.markdown("""
+**评分方法**: 将 R / F / M 各按分位数分为 1~5 档 (5 为最优)：
+
+| 得分 | R (最近购买) | F (购买频率) | M (消费金额) |
+|:---:|:---:|:---:|:---:|
+| **5** | 最近 20% 的客户 | 最频繁的 20% | 消费最高的 20% |
+| **4** | 次近 20% | 次频繁 20% | 次高 20% |
+| **3** | 中间 20% | 中间 20% | 中间 20% |
+| **2** | 次远 20% | 次低频 20% | 次低 20% |
+| **1** | 最远 20% | 最低频 20% | 最低 20% |
+
+**分群规则**:
+
+| 客户分群 | R 分 | F 分 | M 分 | 含义 |
+|:---|:---:|:---:|:---:|:---|
+| 冠军客户 | ≥4 | ≥4 | ≥4 | 近期活跃、高频高消费的核心客户 |
+| 忠诚客户 | ≥3 | ≥3 | — | 持续购买的稳定客户 |
+| 新客户 | ≥4 | ≤2 | — | 刚来不久、尚未形成购买习惯 |
+| 流失风险 | ≤2 | ≥3 | ≥3 | 曾经活跃但近期不再购买 |
+| 流失客户 | ≤2 | ≤2 | ≤2 | 长期不活跃、低消费 |
+| 潜力客户 | ≥3 | 1~2 | — | 有一定活跃度、可挖掘价值 |
+| 沉睡客户 | ≤2 | — | — | 不活跃但未完全流失 |
+| 待开发 | 其他 | — | — | 尚未明确归类的客户 |
+        """)
+
     st.caption("💡 **解读**: 使用分位数法将 R/F/M 各分为 1-5 档 (5 最高)，根据组合得分将客户归入不同价值分群。**沉睡客户**和**流失客户**占比最大，说明客户留存是核心问题。**冠军客户**虽然数量少，但贡献了绝大部分收入，应重点维护。")
 
 # ============================================================
