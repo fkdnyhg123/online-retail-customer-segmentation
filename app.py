@@ -649,20 +649,23 @@ elif page == "💰 RFM 分析":
     st.title("💰 RFM 客户价值分析")
     st.markdown("基于 Recency (最近购买)、Frequency (购买频率)、Monetary (消费金额) 的客户价值模型")
 
-    # RFM 统计 (紧凑一行)
-    stat_cards_row([
-        ('平均最近购买', f"{rfm_stats['avg_recency']} 天"),
-        ('中位数最近购买', f"{rfm_stats['median_recency']} 天"),
-        ('平均购买频率', f"{rfm_stats['avg_frequency']:.1f} 次"),
-        ('中位数购买频率', f"{rfm_stats['median_frequency']:.0f} 次"),
-        ('平均消费金额', f"{rfm_stats['avg_monetary']:.0f} 美元"),
-        ('中位数消费金额', f"{rfm_stats['median_monetary']:.0f} 美元"),
-    ])
+    # R/F/M 核心指标 (紧凑表格, R/F/M 行标签清晰)
+    rfm_seg = compute_rfm_segments(rfm_df)
+    _rows = []
+    for _dim, _lab in [('Recency', '**R** · 最近购买间隔'),
+                       ('Frequency', '**F** · 购买频率'),
+                       ('Monetary', '**M** · 消费金额')]:
+        _i = rfm_seg[_dim]
+        _rows.append(f"| {_lab} | {_fmt_val(_i, _i['p50'])} | {_fmt_val(_i, _i['mean'])} | "
+                     f"{_fmt_val(_i, _i['p75'])} | {_fmt_val(_i, _i['p90'])} |")
+    st.markdown(
+        "| 维度 | 中位数 | 均值 | 上四分位 | 前10%阈值 |\n"
+        "|:---|:---:|:---:|:---:|:---:|\n" + "\n".join(_rows)
+    )
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
     # R/F/M 分布 (分段统计图)
-    rfm_seg = compute_rfm_segments(rfm_df)
     col1, col2, col3 = st.columns(3)
     for mc, dim in zip([col1, col2, col3], ['Recency', 'Frequency', 'Monetary']):
         with mc:
@@ -688,19 +691,7 @@ elif page == "💰 RFM 分析":
             fig_seg.update_layout(margin=dict(l=50, r=10, t=50, b=60))
             st.plotly_chart(fig_seg, use_container_width=True)
 
-    # R/F/M 统计卡片 (每个维度一行紧凑卡片)
-    _rfm_dim_labels = {'Recency': '🕐 最近购买间隔', 'Frequency': '🔄 购买频率', 'Monetary': '💰 消费金额'}
-    for dim in ['Recency', 'Frequency', 'Monetary']:
-        info = rfm_seg[dim]
-        st.markdown(f"**{_rfm_dim_labels[dim]}**")
-        stat_cards_row([
-            ('中位数', _fmt_val(info, info['p50'])),
-            ('均值', _fmt_val(info, info['mean'])),
-            ('上四分位', _fmt_val(info, info['p75'])),
-            ('前10%阈值', _fmt_val(info, info['p90'])),
-        ])
-
-    st.caption("💡 **解读**: R (最近购买间隔) 中位数 52 天，大多数客户在 2 个月内有购买行为。F (购买频率) 以 1-2 次为主，M (消费金额) 以 $200-500 为主——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。这种偏态分布是后续需要做对数变换的原因。")
+    st.caption("💡 **解读**: R (最近购买间隔) 中位数 52 天，大多数客户在 2 个月内有购买行为。F (购买频率) 以 1-2 次为主，M (消费金额) 以 200-500 美元为主——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。这种偏态分布是后续需要做对数变换的原因。")
 
     # RFM 相关性矩阵
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -938,29 +929,25 @@ elif page == "🎯 K-Means 聚类":
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
-    # 3D 散点图
-    st.subheader("🌐 客户 3D 分群可视化")
+    # 平行坐标图 (替代 3D 散点: 静态、易读、可对比各簇在 R/F/M 上的差异)
+    st.subheader("🧭 客户分群平行坐标图")
+    st.caption("每条竖轴代表一个 RFM 维度，每束彩色折线代表一个客户群。无需旋转即可对比各群在 R/F/M 上的高低差异——例如重要价值客户束在 F、M 轴上明显偏高，流失类客户束在 R 轴上偏高。")
     plot_df = clustered_df.copy()
     plot_df['聚类标签'] = plot_df['Cluster'].map(lambda c: f"C{c}: {labels[c]['name']}")
 
-    fig_3d = px.scatter_3d(
-        plot_df, x='Recency', y='Frequency', z='Monetary',
+    _cat_order = [f"C{c}: {labels[c]['name']}" for c in sorted(labels.keys())]
+    fig_pc = px.parallel_coordinates(
+        plot_df,
+        dimensions=['Recency', 'Frequency', 'Monetary'],
         color='聚类标签',
-        hover_data=['Customer ID'],
-        opacity=0.75,
-        labels={'Recency': 'R-最近购买 (天)', 'Frequency': 'F-购买频率', 'Monetary': 'M-消费金额 ($)'},
+        category_orders={'聚类标签': _cat_order},
         color_discrete_sequence=COLORS['palette'],
+        labels={'Recency': 'R-最近购买 (天)', 'Frequency': 'F-购买频率', 'Monetary': 'M-消费金额 (美元)'},
     )
-    fig_3d.update_layout(**CHART_LAYOUT, height=600,
-        scene=dict(
-            xaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb', title='R-最近购买 (天)'),
-            yaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb', title='F-购买频率'),
-            zaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb', title='M-消费金额 ($)'),
-            bgcolor='white',
-        ),
-    )
-    st.plotly_chart(fig_3d, use_container_width=True)
-    st.caption("💡 **解读**: 3D 散点图展示客户在 R/F/M 三维空间中的分布。可旋转查看各簇的空间位置关系——重要价值客户簇 (高频高消费) 位于图上方，流失类簇位于前方 (高 Recency)。簇间存在部分重叠，说明客户群体间边界不是绝对分明的。")
+    fig_pc.update_layout(**CHART_LAYOUT, height=520)
+    fig_pc.update_layout(margin=dict(l=60, r=40, t=30, b=30))
+    st.plotly_chart(fig_pc, use_container_width=True)
+    st.caption("💡 **解读**: 平行坐标图把三维分群投影到平面上，每束折线在三个竖轴上的走向揭示该群体的行为特征。折线束越分散说明簇间边界越模糊；某束在 F/M 轴上一路走高即为高频高消费的重要价值客户，在 R 轴上走高则为长期未购买的流失类客户。")
 
     # 2D 特征空间散点图 (聚类实际发生的空间)
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
