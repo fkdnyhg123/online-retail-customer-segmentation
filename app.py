@@ -933,17 +933,42 @@ elif page == "🎯 K-Means 聚类":
     st.subheader("🧭 客户分群平行坐标图")
     st.caption("每条竖轴代表一个 RFM 维度，每束彩色折线代表一个客户群。无需旋转即可对比各群在 R/F/M 上的高低差异——例如重要价值客户束在 F、M 轴上明显偏高，流失类客户束在 R 轴上偏高。")
     plot_df = clustered_df.copy()
-    plot_df['聚类标签'] = plot_df['Cluster'].map(lambda c: f"C{c}: {labels[c]['name']}")
 
-    _cat_order = [f"C{c}: {labels[c]['name']}" for c in sorted(labels.keys())]
-    fig_pc = px.parallel_coordinates(
-        plot_df,
-        dimensions=['Recency', 'Frequency', 'Monetary'],
-        color='聚类标签',
-        category_orders={'聚类标签': _cat_order},
-        color_discrete_sequence=COLORS['palette'],
-        labels={'Recency': 'R-最近购买 (天)', 'Frequency': 'F-购买频率', 'Monetary': 'M-消费金额 (美元)'},
-    )
+    _cids = sorted(labels.keys())
+    _n = len(_cids)
+    _pal = COLORS['palette'][:_n]
+    _cmap = {cid: i for i, cid in enumerate(_cids)}
+    # 硬边界离散色带: 每个簇占一段, 避免连续插值混色
+    _cs = []
+    for i, c in enumerate(_pal):
+        _cs.append([i / _n, c])
+        _cs.append([(i + 1) / _n, c])
+    _color_vals = plot_df['Cluster'].map(_cmap).astype(float) + 0.5
+
+    # 各轴按 1~99 分位裁剪, 防止极端离群值把折线压到一端
+    def _pc_range(col):
+        lo = float(plot_df[col].quantile(0.01))
+        hi = float(plot_df[col].quantile(0.99))
+        return [lo, hi if hi > lo else lo + 1]
+
+    _dims = [
+        dict(label='R-最近购买 (天)', values=plot_df['Recency'].tolist(), range=_pc_range('Recency')),
+        dict(label='F-购买频率', values=plot_df['Frequency'].tolist(), range=_pc_range('Frequency')),
+        dict(label='M-消费金额 (美元)', values=plot_df['Monetary'].tolist(), range=_pc_range('Monetary')),
+    ]
+    fig_pc = go.Figure(go.Parcoords(
+        line=dict(
+            color=_color_vals.tolist(), colorscale=_cs, cmin=0, cmax=_n,
+            showscale=True,
+            colorbar=dict(
+                tickvals=[i + 0.5 for i in range(_n)],
+                ticktext=[f"C{cid}: {labels[cid]['name']}" for cid in _cids],
+                thickness=14, len=0.85,
+                tickfont=dict(size=11),
+            ),
+        ),
+        dimensions=_dims,
+    ))
     fig_pc.update_layout(**CHART_LAYOUT, height=520)
     fig_pc.update_layout(margin=dict(l=60, r=40, t=30, b=30))
     st.plotly_chart(fig_pc, use_container_width=True)
