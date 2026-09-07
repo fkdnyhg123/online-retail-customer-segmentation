@@ -227,10 +227,10 @@ def compute_distribution_stats(_df):
                      'unit': '', 'fmt': '{:.0f}'},
         'Price':    {'bins': [0, 1, 2, 5, 10, 20, float('inf')],
                      'labels': ['$0-1', '$1-2', '$2-5', '$5-10', '$10-20', '$20+'],
-                     'unit': '$', 'fmt': '${:.2f}'},
+                     'unit': '$', 'fmt': '{:.2f} 美元'},
         'Revenue':  {'bins': [0, 5, 10, 20, 50, 100, float('inf')],
                      'labels': ['$0-5', '$5-10', '$10-20', '$20-50', '$50-100', '$100+'],
-                     'unit': '$', 'fmt': '${:.2f}'},
+                     'unit': '$', 'fmt': '{:.2f} 美元'},
     }
     for col, cfg in configs.items():
         s = _df[col]
@@ -281,7 +281,7 @@ def compute_rfm_segments(_rfm_df):
             'bins': [0, 200, 500, 1000, 2000, 5000, float('inf')],
             'labels': ['$0-200', '$200-500', '$500-1K', '$1K-2K', '$2K-5K', '$5K+'],
             'xaxis_title': '总消费 ($)', 'title': 'M - 消费金额分布',
-            'color': COLORS['success'], 'fmt': '${:.0f}',
+            'color': COLORS['success'], 'fmt': '{:.0f} 美元',
         },
     }
     results = {}
@@ -529,8 +529,8 @@ elif page == "🔍 数据探索":
             for mc, label, val in [
                 (mc1, '中位数', fmt.format(info['p50'])),
                 (mc2, '均值', fmt.format(info['mean'])),
-                (mc3, 'P25 ~ P75', f"{fmt.format(info['p25'])} ~ {fmt.format(info['p75'])}"),
-                (mc4, 'P90', fmt.format(info['p90'])),
+                (mc3, '中间50%范围', f"{fmt.format(info['p25'])} ~ {fmt.format(info['p75'])}"),
+                (mc4, '前10%阈值', fmt.format(info['p90'])),
             ]:
                 mc.markdown(f'<div class="metric-card-wide"><p>{label}</p><h3>{val}</h3></div>', unsafe_allow_html=True)
             st.markdown("")
@@ -558,10 +558,10 @@ elif page == "🔍 数据探索":
             st.plotly_chart(fig_seg, use_container_width=True)
 
             st.markdown(
-                f"P25: **{fmt.format(info['p25'])}** · "
+                f"下四分位: **{fmt.format(info['p25'])}** · "
                 f"中位数: **{fmt.format(info['p50'])}** · "
-                f"P75: **{fmt.format(info['p75'])}** · "
-                f"P95: **{fmt.format(info['p95'])}** · "
+                f"上四分位: **{fmt.format(info['p75'])}** · "
+                f"前5%值: **{fmt.format(info['p95'])}** · "
                 f"最大值: {fmt.format(info['max'])}"
             )
 
@@ -589,14 +589,14 @@ elif page == "💰 RFM 分析":
     # RFM 统计
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("平均 Recency", f"{rfm_stats['avg_recency']} 天", help="距上次购买的平均天数")
-        st.metric("中位数 Recency", f"{rfm_stats['median_recency']} 天")
+        st.markdown(f'<div class="metric-card-wide"><p>平均最近购买间隔</p><h3>{rfm_stats["avg_recency"]} 天</h3></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card-wide"><p>中位数最近购买间隔</p><h3>{rfm_stats["median_recency"]} 天</h3></div>', unsafe_allow_html=True)
     with col2:
-        st.metric("平均 Frequency", f"{rfm_stats['avg_frequency']:.1f} 次", help="平均订单数")
-        st.metric("中位数 Frequency", f"{rfm_stats['median_frequency']:.0f} 次")
+        st.markdown(f'<div class="metric-card-wide"><p>平均购买频率</p><h3>{rfm_stats["avg_frequency"]:.1f} 次</h3></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card-wide"><p>中位数购买频率</p><h3>{rfm_stats["median_frequency"]:.0f} 次</h3></div>', unsafe_allow_html=True)
     with col3:
-        st.metric("平均 Monetary", f"${rfm_stats['avg_monetary']:.2f}", help="平均总消费金额")
-        st.metric("中位数 Monetary", f"${rfm_stats['median_monetary']:.2f}")
+        st.markdown(f'<div class="metric-card-wide"><p>平均消费金额</p><h3>{rfm_stats["avg_monetary"]:.2f} 美元</h3></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card-wide"><p>中位数消费金额</p><h3>{rfm_stats["median_monetary"]:.2f} 美元</h3></div>', unsafe_allow_html=True)
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -629,8 +629,8 @@ elif page == "💰 RFM 分析":
             st.markdown(
                 f"中位数: **{fmt.format(info['p50'])}** · "
                 f"均值: **{fmt.format(info['mean'])}** · "
-                f"P75: **{fmt.format(info['p75'])}** · "
-                f"P90: **{fmt.format(info['p90'])}**"
+                f"上四分位: **{fmt.format(info['p75'])}** · "
+                f"前10%阈值: **{fmt.format(info['p90'])}**"
             )
 
     st.caption("💡 **解读**: R (最近购买间隔) 中位数 52 天，大多数客户在 2 个月内有购买行为。F (购买频率) 以 1-2 次为主，M (消费金额) 以 $200-500 为主——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。这种偏态分布是后续需要做对数变换的原因。")
