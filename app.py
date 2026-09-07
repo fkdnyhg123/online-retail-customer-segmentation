@@ -210,6 +210,57 @@ def load_and_clean(filepath):
 DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "online_retail_II(1).xlsx")
 raw_df, cleaned_df, quality_report, cleaned_quality, cleaning_summary, rfm_df, rfm_scored, rfm_stats = load_and_clean(DATA_PATH)
 
+# ---- 页面 2 缓存函数 ----
+@st.cache_data(show_spinner=False)
+def filter_explore_data(_df, start_ts, end_ts):
+    """按时间范围过滤数据并缓存"""
+    df = _df[(_df['InvoiceDate'] >= start_ts) & (_df['InvoiceDate'] <= end_ts)].copy()
+    return df
+
+@st.cache_data(show_spinner=False)
+def compute_distribution_stats(_df):
+    """计算 Quantity / Price / Revenue 的分段统计"""
+    results = {}
+    configs = {
+        'Quantity': {'bins': [0, 2, 5, 12, 24, 50, float('inf')],
+                     'labels': ['1-2件', '3-5件', '6-12件', '13-24件', '25-50件', '50+件'],
+                     'unit': '', 'fmt': '{:.0f}'},
+        'Price':    {'bins': [0, 1, 2, 5, 10, 20, float('inf')],
+                     'labels': ['$0-1', '$1-2', '$2-5', '$5-10', '$10-20', '$20+'],
+                     'unit': '$', 'fmt': '${:.2f}'},
+        'Revenue':  {'bins': [0, 5, 10, 20, 50, 100, float('inf')],
+                     'labels': ['$0-5', '$5-10', '$10-20', '$20-50', '$50-100', '$100+'],
+                     'unit': '$', 'fmt': '${:.2f}'},
+    }
+    for col, cfg in configs.items():
+        s = _df[col]
+        counts = pd.cut(s, bins=cfg['bins'], labels=cfg['labels'], right=True).value_counts().sort_index()
+        total = len(s)
+        pcts = (counts / total * 100).round(1)
+        quantiles = s.quantile([0.25, 0.5, 0.75, 0.90, 0.95])
+        results[col] = {
+            'labels': cfg['labels'],
+            'counts': counts.tolist(),
+            'pcts': pcts.tolist(),
+            'p25': float(quantiles[0.25]), 'p50': float(quantiles[0.5]),
+            'p75': float(quantiles[0.75]), 'p90': float(quantiles[0.90]),
+            'p95': float(quantiles[0.95]),
+            'mean': float(s.mean()), 'max': float(s.max()),
+            'fmt': cfg['fmt'], 'unit': cfg['unit'],
+        }
+    return results
+
+@st.cache_data(show_spinner=False)
+def compute_top_products(_df, top_n):
+    """计算热销商品排名 (缓存)"""
+    tp = _df.groupby(['StockCode', 'Description']).agg(
+        收入=('Revenue', 'sum'),
+        销量=('Quantity', 'sum'),
+        订单数=('Invoice', 'nunique')
+    ).sort_values('收入', ascending=False).head(top_n).reset_index()
+    tp['商品名称'] = tp.apply(lambda r: f"{r['Description']}  ({r['StockCode']})", axis=1)
+    return tp
+
 # ============================================================
 # 侧边栏导航
 # ============================================================
@@ -403,61 +454,82 @@ elif page == "🔍 数据探索":
         _fs = pd.Period(ordinal=_sel_s, freq='M').start_time
         _fe = pd.Period(ordinal=_sel_e, freq='M').end_time
 
-    explore_df = cleaned_df[(cleaned_df['InvoiceDate'] >= _fs) & (cleaned_df['InvoiceDate'] <= _fe)].copy()
+    explore_df = filter_explore_data(cleaned_df, _fs, _fe)
     if len(explore_df) == 0:
         st.warning("⚠️ 所选时间范围内无数据。")
         st.stop()
     st.caption(f"当前范围: **{len(explore_df):,}** 条交易 · "
                f"**{explore_df['InvoiceDate'].min().date()}** ~ **{explore_df['InvoiceDate'].max().date()}**")
 
-    # 字段分布
+    # ---- 字段值分布 (方案C: 分段统计图) ----
     st.subheader("📊 字段值分布")
-    st.caption("通过直方图观察各字段的值分布形态，判断是否存在偏态、离群值等特征。")
-    tab1, tab2, tab3 = st.tabs(["数量 (Quantity)", "单价 (Price)", "收入 (Revenue)"])
+    st.caption("按业务含义分段统计，直观展示各区间订单数量与占比。")
 
-    with tab1:
-        _q90 = explore_df['Quantity'].quantile(0.90)
-        fig_qty = px.histogram(explore_df, x='Quantity', nbins=50,
-                               color_discrete_sequence=[COLORS['primary']])
-        fig_qty.update_layout(**CHART_LAYOUT, height=400, title="订单数量分布",
-                              xaxis_title='购买数量', yaxis_title='订单数',
-                              xaxis=dict(range=[0, _q90 * 1.1]))
-        st.plotly_chart(fig_qty, use_container_width=True)
-        _p25, _p50, _p75, _p95 = explore_df['Quantity'].quantile([0.25, 0.5, 0.75, 0.95])
-        st.markdown(f"P25: **{_p25:.0f}** · 中位数: **{_p50:.0f}** · P75: **{_p75:.0f}** · P95: **{_p95:.0f}** · 最大值: {explore_df['Quantity'].max()}")
+    dist_stats = compute_distribution_stats(explore_df)
 
-    with tab2:
-        _pq90 = explore_df['Price'].quantile(0.90)
-        fig_price = px.histogram(explore_df, x='Price', nbins=50,
-                                 color_discrete_sequence=[COLORS['secondary']])
-        fig_price.update_layout(**CHART_LAYOUT, height=400, title="单价分布",
-                                xaxis_title='单价 (美元 $)', yaxis_title='订单数',
-                                xaxis=dict(range=[0, _pq90 * 1.1]))
-        st.plotly_chart(fig_price, use_container_width=True)
-        _p25, _p50, _p75, _p95 = explore_df['Price'].quantile([0.25, 0.5, 0.75, 0.95])
-        st.markdown(f"P25: **${_p25:.2f}** · 中位数: **${_p50:.2f}** · P75: **${_p75:.2f}** · P95: **${_p95:.2f}** · 最大值: ${explore_df['Price'].max():.2f}")
+    _seg_configs = {
+        'Quantity': {'title': '订单数量分布', 'xaxis_title': '购买数量',
+                     'color': COLORS['primary'], 'icon': '📦'},
+        'Price':    {'title': '单价分布', 'xaxis_title': '单价 (美元 $)',
+                     'color': COLORS['secondary'], 'icon': '💲'},
+        'Revenue':  {'title': '单笔交易收入分布', 'xaxis_title': '收入 (美元 $)',
+                     'color': COLORS['success'], 'icon': '💰'},
+    }
 
-    with tab3:
-        _rq90 = explore_df['Revenue'].quantile(0.90)
-        fig_rev = px.histogram(explore_df, x='Revenue', nbins=50,
-                               color_discrete_sequence=[COLORS['success']])
-        fig_rev.update_layout(**CHART_LAYOUT, height=400, title="单笔交易收入分布",
-                              xaxis_title='收入 (美元 $)', yaxis_title='订单数',
-                              xaxis=dict(range=[0, _rq90 * 1.1]))
-        st.plotly_chart(fig_rev, use_container_width=True)
-        _p25, _p50, _p75, _p95 = explore_df['Revenue'].quantile([0.25, 0.5, 0.75, 0.95])
-        st.markdown(f"P25: **${_p25:.2f}** · 中位数: **${_p50:.2f}** · P75: **${_p75:.2f}** · P95: **${_p95:.2f}** · 最大值: ${explore_df['Revenue'].max():.2f}")
+    tab1, tab2, tab3 = st.tabs(["📦 数量 (Quantity)", "💲 单价 (Price)", "💰 收入 (Revenue)"])
 
-    # 热销商品
+    for tab, col in zip([tab1, tab2, tab3], ['Quantity', 'Price', 'Revenue']):
+        with tab:
+            info = dist_stats[col]
+            cfg = _seg_configs[col]
+            fmt = info['fmt']
+
+            # 统计卡片
+            mc1, mc2, mc3, mc4 = st.columns(4)
+            for mc, label, val in [
+                (mc1, '中位数', fmt.format(info['p50'])),
+                (mc2, '均值', fmt.format(info['mean'])),
+                (mc3, 'P25 ~ P75', f"{fmt.format(info['p25'])} ~ {fmt.format(info['p75'])}"),
+                (mc4, 'P90', fmt.format(info['p90'])),
+            ]:
+                mc.markdown(f'<div class="metric-card-wide"><p>{label}</p><h3>{val}</h3></div>', unsafe_allow_html=True)
+            st.markdown("")
+
+            # 分段柱状图
+            fig_seg = px.bar(
+                x=info['labels'], y=info['counts'],
+                color=info['counts'],
+                color_continuous_scale=[cfg['color'] + '66', cfg['color']],
+                labels={'x': cfg['xaxis_title'], 'y': '订单数'},
+            )
+            # 在柱子上方标注百分比
+            fig_seg.update_traces(
+                text=[f"{p}%" for p in info['pcts']],
+                textposition='outside',
+                textfont=dict(size=13, color='#333'),
+                hovertemplate=f'{cfg["xaxis_title"]}'+'=%{x}<br>订单数=%{y:,.0f}<br>占比=%{text}<extra></extra>'
+            )
+            fig_seg.update_layout(
+                **CHART_LAYOUT, height=400, title=cfg['title'],
+                showlegend=False, coloraxis_showscale=False,
+                xaxis=dict(tickfont=dict(size=13)),
+                yaxis=dict(title='订单数'),
+            )
+            st.plotly_chart(fig_seg, use_container_width=True)
+
+            st.markdown(
+                f"P25: **{fmt.format(info['p25'])}** · "
+                f"中位数: **{fmt.format(info['p50'])}** · "
+                f"P75: **{fmt.format(info['p75'])}** · "
+                f"P95: **{fmt.format(info['p95'])}** · "
+                f"最大值: {fmt.format(info['max'])}"
+            )
+
+    # ---- 热销商品 ----
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
     st.subheader("🏆 热销商品排名 (按收入)")
     top_n = st.slider("显示数量", min_value=5, max_value=30, value=20, step=5, key="top_n")
-    top_products = explore_df.groupby(['StockCode', 'Description']).agg(
-        收入=('Revenue', 'sum'),
-        销量=('Quantity', 'sum'),
-        订单数=('Invoice', 'nunique')
-    ).sort_values('收入', ascending=False).head(top_n).reset_index()
-    top_products['商品名称'] = top_products.apply(lambda r: f"{r['Description']}  ({r['StockCode']})", axis=1)
+    top_products = compute_top_products(explore_df, top_n)
     fig_top = px.bar(top_products, x='收入', y='商品名称', orientation='h',
                      color='收入', color_continuous_scale='Viridis',
                      hover_data=['StockCode', '销量', '订单数'])
