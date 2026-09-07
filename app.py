@@ -190,6 +190,10 @@ def load_and_clean(filepath):
         raw_df = load_raw_data(filepath)
         cleaned_df = clean_data(raw_df)
         try:
+            for col in raw_df.select_dtypes(include=['object']).columns:
+                raw_df[col] = raw_df[col].astype(str)
+            for col in cleaned_df.select_dtypes(include=['object']).columns:
+                cleaned_df[col] = cleaned_df[col].astype(str)
             raw_df.to_parquet(_raw_pq, index=False, engine='pyarrow')
             cleaned_df.to_parquet(_clean_pq, index=False, engine='pyarrow')
         except Exception:
