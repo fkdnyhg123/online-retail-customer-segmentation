@@ -948,7 +948,7 @@ elif page == "🎯 K-Means 聚类":
         labels={'Recency': 'R-最近购买 (天)', 'Frequency': 'F-购买频率', 'Monetary': 'M-消费金额 (美元)'},
         color_discrete_sequence=COLORS['palette'],
     )
-    fig_3d.update_traces(marker=dict(size=3, line=dict(width=0)))
+    fig_3d.update_traces(marker=dict(size=4, line=dict(width=0)))
 
     # 簇中心: 大菱形 + 群名文字, 直接标在 3D 空间里
     _cent = plot_df.groupby('Cluster')[['Recency', 'Frequency', 'Monetary']].mean()
@@ -958,18 +958,19 @@ elif page == "🎯 K-Means 聚类":
         y=[float(_cent.loc[c, 'Frequency']) for c in _cids],
         z=[float(_cent.loc[c, 'Monetary']) for c in _cids],
         mode='markers+text',
-        marker=dict(size=9, symbol='diamond', color='#111827',
+        marker=dict(size=11, symbol='diamond', color='#111827',
                     line=dict(width=1.5, color='white')),
         text=[labels[c]['name'] for c in _cids],
         textposition='top center',
-        textfont=dict(size=12, color='#111827'),
+        textfont=dict(size=13, color='#111827'),
         hoverinfo='text',
         showlegend=False,
         name='簇中心',
     ))
 
-    fig_3d.update_layout(**CHART_LAYOUT, height=620)
+    fig_3d.update_layout(**CHART_LAYOUT, height=800)
     fig_3d.update_layout(
+        margin=dict(l=10, r=10, t=30, b=10),
         scene=dict(
             xaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
                        title='R-最近购买 (天)', range=[0, _cap['Recency']]),
@@ -978,10 +979,12 @@ elif page == "🎯 K-Means 聚类":
             zaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
                        title='M-消费金额 (美元)', range=[0, _cap['Monetary']]),
             bgcolor='white',
-            camera=dict(eye=dict(x=1.7, y=-1.7, z=0.9)),
+            aspectmode='manual',
+            aspectratio=dict(x=1.35, y=1.35, z=1.0),
+            camera=dict(eye=dict(x=1.5, y=-1.5, z=0.8)),
         ),
-        legend=dict(title=dict(text='客户群'), orientation='v',
-                    yanchor='top', y=0.95, xanchor='left', x=1.02),
+        legend=dict(title=dict(text='客户群'), orientation='h',
+                    yanchor='top', y=-0.02, xanchor='center', x=0.5),
     )
     st.plotly_chart(fig_3d, use_container_width=True)
     st.caption("💡 **解读**: 3D 散点把每个客户按 R/F/M 放进空间，同色点聚成一团即一个客户群。靠近 **F、M 轴高处** 的团是高频高消费的重要价值客户；靠近 **R 轴远处** (很久没买) 的团是流失/沉睡类客户。黑色菱形标出各群中心，两团中心距离越远说明这两类客户差异越明显。可拖拽旋转、滚轮缩放查看不同角度。")
