@@ -103,6 +103,19 @@ st.markdown("""
     .metric-card-wide h2 { color: #2563eb; margin: 0; font-size: 24px; }
     .metric-card-wide p { color: #6b7280; margin: 5px 0 0 0; font-size: 13px; }
 
+    /* 紧凑等高统计卡片行 */
+    .stat-row { display: flex; gap: 10px; margin: 6px 0 10px 0; }
+    .stat-card {
+        flex: 1; min-width: 0;
+        background: linear-gradient(135deg, #f0f4ff 0%, #e8f4fd 100%);
+        border-radius: 10px; padding: 10px 12px; text-align: center;
+        border: 1px solid #d0e0f0;
+        display: flex; flex-direction: column; justify-content: center;
+    }
+    .stat-card p { color: #6b7280; margin: 0; font-size: 12px; }
+    .stat-card h3 { color: #1a1a2e; margin: 4px 0 0 0; font-size: 16px;
+                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
     /* 聚类详情卡片 */
     .cluster-card {
         background: linear-gradient(135deg, #f0f4ff 0%, #faf5ff 100%);
@@ -224,13 +237,13 @@ def compute_distribution_stats(_df):
     configs = {
         'Quantity': {'bins': [0, 2, 5, 12, 24, 50, float('inf')],
                      'labels': ['1-2件', '3-5件', '6-12件', '13-24件', '25-50件', '50+件'],
-                     'unit': '', 'fmt': '{:.0f}'},
+                     'unit': '', 'fmt': '{:.0f}', 'numfmt': '{:.0f}'},
         'Price':    {'bins': [0, 1, 2, 5, 10, 20, float('inf')],
                      'labels': ['$0-1', '$1-2', '$2-5', '$5-10', '$10-20', '$20+'],
-                     'unit': '$', 'fmt': '{:.2f} 美元'},
+                     'unit': '美元', 'fmt': '{:.2f} 美元', 'numfmt': '{:.2f}'},
         'Revenue':  {'bins': [0, 5, 10, 20, 50, 100, float('inf')],
                      'labels': ['$0-5', '$5-10', '$10-20', '$20-50', '$50-100', '$100+'],
-                     'unit': '$', 'fmt': '{:.2f} 美元'},
+                     'unit': '美元', 'fmt': '{:.2f} 美元', 'numfmt': '{:.2f}'},
     }
     for col, cfg in configs.items():
         s = _df[col]
@@ -246,7 +259,7 @@ def compute_distribution_stats(_df):
             'p75': float(quantiles[0.75]), 'p90': float(quantiles[0.90]),
             'p95': float(quantiles[0.95]),
             'mean': float(s.mean()), 'max': float(s.max()),
-            'fmt': cfg['fmt'], 'unit': cfg['unit'],
+            'fmt': cfg['fmt'], 'unit': cfg['unit'], 'numfmt': cfg['numfmt'],
         }
     return results
 
@@ -269,19 +282,19 @@ def compute_rfm_segments(_rfm_df):
             'bins': [0, 7, 14, 30, 60, 120, 200, float('inf')],
             'labels': ['1-7天', '8-14天', '15-30天', '31-60天', '61-120天', '121-200天', '200+天'],
             'xaxis_title': '距上次购买 (天)', 'title': 'R - 最近购买间隔分布',
-            'color': COLORS['primary'], 'fmt': '{:.0f}天',
+            'color': COLORS['primary'], 'fmt': '{:.0f}天', 'numfmt': '{:.0f}', 'unit': '天',
         },
         'Frequency': {
             'bins': [0, 1, 2, 5, 10, 20, float('inf')],
             'labels': ['1次', '2次', '3-5次', '6-10次', '11-20次', '20+次'],
             'xaxis_title': '订单数', 'title': 'F - 购买频率分布',
-            'color': COLORS['danger'], 'fmt': '{:.0f}次',
+            'color': COLORS['danger'], 'fmt': '{:.0f}次', 'numfmt': '{:.0f}', 'unit': '次',
         },
         'Monetary': {
             'bins': [0, 200, 500, 1000, 2000, 5000, float('inf')],
             'labels': ['$0-200', '$200-500', '$500-1K', '$1K-2K', '$2K-5K', '$5K+'],
             'xaxis_title': '总消费 ($)', 'title': 'M - 消费金额分布',
-            'color': COLORS['success'], 'fmt': '{:.0f} 美元',
+            'color': COLORS['success'], 'fmt': '{:.0f} 美元', 'numfmt': '{:.0f}', 'unit': '美元',
         },
     }
     results = {}
@@ -298,8 +311,37 @@ def compute_rfm_segments(_rfm_df):
             'mean': float(s.mean()), 'max': float(s.max()),
             'xaxis_title': cfg['xaxis_title'], 'title': cfg['title'],
             'color': cfg['color'], 'fmt': cfg['fmt'],
+            'numfmt': cfg['numfmt'], 'unit': cfg['unit'],
         }
     return results
+
+def _fmt_val(info, v):
+    """格式化单个值: 数字+单位"""
+    num = info['numfmt'].format(v)
+    unit = info.get('unit', '')
+    if not unit:
+        return num
+    if unit in ('天', '次'):
+        return num + unit
+    return num + ' ' + unit
+
+def _fmt_range(info, a, b):
+    """格式化范围: 数字~数字+单位(单位只出现一次)"""
+    num = f"{info['numfmt'].format(a)} ~ {info['numfmt'].format(b)}"
+    unit = info.get('unit', '')
+    if not unit:
+        return num
+    if unit in ('天', '次'):
+        return num + unit
+    return num + ' ' + unit
+
+def stat_cards_row(items):
+    """渲染一行紧凑等高统计卡片, items = [(label, value), ...]"""
+    html = '<div class="stat-row">'
+    for label, val in items:
+        html += f'<div class="stat-card"><p>{label}</p><h3>{val}</h3></div>'
+    html += '</div>'
+    st.markdown(html, unsafe_allow_html=True)
 
 # ============================================================
 # 侧边栏导航
@@ -547,18 +589,14 @@ elif page == "🔍 数据探索":
         with tab:
             info = dist_stats[col]
             cfg = _seg_configs[col]
-            fmt = info['fmt']
 
-            # 统计卡片
-            mc1, mc2, mc3, mc4 = st.columns(4)
-            for mc, label, val in [
-                (mc1, '中位数', fmt.format(info['p50'])),
-                (mc2, '均值', fmt.format(info['mean'])),
-                (mc3, '中间50%范围', f"{fmt.format(info['p25'])} ~ {fmt.format(info['p75'])}"),
-                (mc4, '前10%阈值', fmt.format(info['p90'])),
-            ]:
-                mc.markdown(f'<div class="metric-card-wide"><p>{label}</p><h3>{val}</h3></div>', unsafe_allow_html=True)
-            st.markdown("")
+            # 统计卡片 (紧凑等高)
+            stat_cards_row([
+                ('中位数', _fmt_val(info, info['p50'])),
+                ('均值', _fmt_val(info, info['mean'])),
+                ('中间50%范围', _fmt_range(info, info['p25'], info['p75'])),
+                ('前10%阈值', _fmt_val(info, info['p90'])),
+            ])
 
             # 分段柱状图
             fig_seg = px.bar(
@@ -583,11 +621,11 @@ elif page == "🔍 数据探索":
             st.plotly_chart(fig_seg, use_container_width=True)
 
             st.markdown(
-                f"下四分位: **{fmt.format(info['p25'])}** · "
-                f"中位数: **{fmt.format(info['p50'])}** · "
-                f"上四分位: **{fmt.format(info['p75'])}** · "
-                f"前5%值: **{fmt.format(info['p95'])}** · "
-                f"最大值: {fmt.format(info['max'])}"
+                f"下四分位: **{_fmt_val(info, info['p25'])}** · "
+                f"中位数: **{_fmt_val(info, info['p50'])}** · "
+                f"上四分位: **{_fmt_val(info, info['p75'])}** · "
+                f"前5%值: **{_fmt_val(info, info['p95'])}** · "
+                f"最大值: {_fmt_val(info, info['max'])}"
             )
 
     # ---- 热销商品 ----
@@ -611,17 +649,15 @@ elif page == "💰 RFM 分析":
     st.title("💰 RFM 客户价值分析")
     st.markdown("基于 Recency (最近购买)、Frequency (购买频率)、Monetary (消费金额) 的客户价值模型")
 
-    # RFM 统计
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown(f'<div class="metric-card-wide"><p>平均最近购买间隔</p><h3>{rfm_stats["avg_recency"]} 天</h3></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-card-wide"><p>中位数最近购买间隔</p><h3>{rfm_stats["median_recency"]} 天</h3></div>', unsafe_allow_html=True)
-    with col2:
-        st.markdown(f'<div class="metric-card-wide"><p>平均购买频率</p><h3>{rfm_stats["avg_frequency"]:.1f} 次</h3></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-card-wide"><p>中位数购买频率</p><h3>{rfm_stats["median_frequency"]:.0f} 次</h3></div>', unsafe_allow_html=True)
-    with col3:
-        st.markdown(f'<div class="metric-card-wide"><p>平均消费金额</p><h3>{rfm_stats["avg_monetary"]:.2f} 美元</h3></div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="metric-card-wide"><p>中位数消费金额</p><h3>{rfm_stats["median_monetary"]:.2f} 美元</h3></div>', unsafe_allow_html=True)
+    # RFM 统计 (紧凑一行)
+    stat_cards_row([
+        ('平均最近购买', f"{rfm_stats['avg_recency']} 天"),
+        ('中位数最近购买', f"{rfm_stats['median_recency']} 天"),
+        ('平均购买频率', f"{rfm_stats['avg_frequency']:.1f} 次"),
+        ('中位数购买频率', f"{rfm_stats['median_frequency']:.0f} 次"),
+        ('平均消费金额', f"{rfm_stats['avg_monetary']:.0f} 美元"),
+        ('中位数消费金额', f"{rfm_stats['median_monetary']:.0f} 美元"),
+    ])
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -652,20 +688,17 @@ elif page == "💰 RFM 分析":
             fig_seg.update_layout(margin=dict(l=50, r=10, t=50, b=60))
             st.plotly_chart(fig_seg, use_container_width=True)
 
-    # R/F/M 统计卡片 (每个维度一行4个卡片)
+    # R/F/M 统计卡片 (每个维度一行紧凑卡片)
     _rfm_dim_labels = {'Recency': '🕐 最近购买间隔', 'Frequency': '🔄 购买频率', 'Monetary': '💰 消费金额'}
     for dim in ['Recency', 'Frequency', 'Monetary']:
         info = rfm_seg[dim]
-        fmt = info['fmt']
         st.markdown(f"**{_rfm_dim_labels[dim]}**")
-        mc1, mc2, mc3, mc4 = st.columns(4)
-        for mc, label, val in [
-            (mc1, '中位数', fmt.format(info['p50'])),
-            (mc2, '均值', fmt.format(info['mean'])),
-            (mc3, '上四分位', fmt.format(info['p75'])),
-            (mc4, '前10%阈值', fmt.format(info['p90'])),
-        ]:
-            mc.markdown(f'<div class="metric-card-wide"><p>{label}</p><h3>{val}</h3></div>', unsafe_allow_html=True)
+        stat_cards_row([
+            ('中位数', _fmt_val(info, info['p50'])),
+            ('均值', _fmt_val(info, info['mean'])),
+            ('上四分位', _fmt_val(info, info['p75'])),
+            ('前10%阈值', _fmt_val(info, info['p90'])),
+        ])
 
     st.caption("💡 **解读**: R (最近购买间隔) 中位数 52 天，大多数客户在 2 个月内有购买行为。F (购买频率) 以 1-2 次为主，M (消费金额) 以 $200-500 为主——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。这种偏态分布是后续需要做对数变换的原因。")
 
@@ -695,48 +728,27 @@ elif page == "💰 RFM 分析":
         st.plotly_chart(fig_corr, use_container_width=True)
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-    st.subheader("🔗 RFM 维度相关性 (联动)")
-    st.caption("💡 在任一图中框选或点击气泡，另一张图会高亮同一批客户。")
+    st.subheader("🔗 RFM 维度相关性")
+    col1, col2 = st.columns(2)
+    with col1:
+        fig_rf = px.scatter(rfm_df, x='Frequency', y='Recency',
+                            size='Monetary', color='Monetary',
+                            color_continuous_scale='Viridis',
+                            hover_data=['Customer ID'], opacity=0.6)
+        fig_rf.update_layout(**CHART_LAYOUT, title="频率 vs 最近购买 (气泡大小/颜色 = 消费金额)",
+                             xaxis_title='购买频率 (次)', yaxis_title='最近购买间隔 (天)', height=450)
+        st.plotly_chart(fig_rf, use_container_width=True)
 
-    _sel_left = st.plotly_chart(
-        px.scatter(rfm_df, x='Frequency', y='Recency',
-                   size='Monetary', color='Monetary',
-                   color_continuous_scale='Viridis',
-                   custom_data=['Customer ID'], opacity=0.6)
-        .update_layout(**CHART_LAYOUT, title="频率 vs 最近购买 (气泡大小/颜色 = 消费金额)",
-                       xaxis_title='购买频率 (次)', yaxis_title='最近购买间隔 (天)', height=450),
-        use_container_width=True, selection_mode="points", on_select="rerun", key="rfm_scatter_left"
-    )
-    _sel_right = st.plotly_chart(
-        px.scatter(rfm_df, x='Frequency', y='Monetary',
-                   size='Recency', color='Recency',
-                   color_continuous_scale='RdYlGn_r',
-                   custom_data=['Customer ID'], opacity=0.6)
-        .update_layout(**CHART_LAYOUT, title="频率 vs 消费金额 (气泡大小/颜色 = 最近购买)",
-                       xaxis_title='购买频率 (次)', yaxis_title='消费金额 ($)', height=450),
-        use_container_width=True, selection_mode="points", on_select="rerun", key="rfm_scatter_right"
-    )
+    with col2:
+        fig_fm = px.scatter(rfm_df, x='Frequency', y='Monetary',
+                            size='Recency', color='Recency',
+                            color_continuous_scale='RdYlGn_r',
+                            hover_data=['Customer ID'], opacity=0.6)
+        fig_fm.update_layout(**CHART_LAYOUT, title="频率 vs 消费金额 (气泡大小/颜色 = 最近购买)",
+                             xaxis_title='购买频率 (次)', yaxis_title='消费金额 ($)', height=450)
+        st.plotly_chart(fig_fm, use_container_width=True)
 
-    # 收集选中的客户 ID
-    _selected_ids = set()
-    for _sel in [_sel_left, _sel_right]:
-        _pts = _sel.get('selection', {}).get('points', [])
-        for _p in _pts:
-            _cid = _p.get('customdata', [None])[0]
-            if _cid is not None:
-                _selected_ids.add(str(_cid))
-
-    if _selected_ids:
-        st.info(f"✅ 已选中 **{len(_selected_ids)}** 位客户")
-        _sel_df = rfm_df[rfm_df['Customer ID'].astype(str).isin(_selected_ids)].sort_values('Monetary', ascending=False)
-        _sc1, _sc2, _sc3 = st.columns(3)
-        _sc1.metric("选中客户数", f"{len(_sel_df)}")
-        _sc2.metric("平均频率", f"{_sel_df['Frequency'].mean():.1f} 次")
-        _sc3.metric("平均消费", f"{_sel_df['Monetary'].mean():.0f} 美元")
-        st.dataframe(_sel_df[['Customer ID', 'Recency', 'Frequency', 'Monetary']].head(20),
-                     use_container_width=True, hide_index=True)
-    else:
-        st.caption("💡 **解读**: 左图 (频率 vs 最近购买) 中气泡大小和颜色代表消费金额，可见高频客户 (右侧) 消费金额更高且购买更近期。右图 (频率 vs 消费金额) 显示频率和金额正相关，但少量极端客户 (右上角) 的消费金额远超其他客户，进一步验证了偏态分布。")
+    st.caption("💡 **解读**: 左图 (频率 vs 最近购买) 中气泡大小和颜色代表消费金额，可见高频客户 (右侧) 消费金额更高且购买更近期。右图 (频率 vs 消费金额) 显示频率和金额正相关，但少量极端客户 (右上角) 的消费金额远超其他客户，进一步验证了偏态分布。")
 
     # RFM 分数分群
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
