@@ -16,6 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils.data_cleaner import load_raw_data, clean_data, get_data_quality_report, get_cleaning_summary
 from utils.rfm import calculate_rfm, add_rfm_scores, get_rfm_stats
 from utils.clustering import prepare_features, find_optimal_k, run_kmeans, get_cluster_labels
+from utils.association import (prepare_basket_matrix, run_fpgrowth,
+                               compute_cooccurrence_matrix, build_network_graph)
 
 # ============================================================
 # 页面配置
@@ -365,7 +367,7 @@ def cached_run_kmeans(_rfm_df, n_clusters, method, winsorize_pct):
 st.sidebar.markdown("## 📊 导航面板")
 page = st.sidebar.radio(
     "页面选择",
-    ["📈 数据概览", "🔍 数据探索", "💰 RFM 分析", "🎯 K-Means 聚类"],
+    ["📈 数据概览", "🔍 数据探索", "💰 RFM 分析", "🎯 K-Means 聚类", "🔗 关联规则分析"],
     label_visibility="collapsed"
 )
 
@@ -1173,3 +1175,205 @@ elif page == "🎯 K-Means 聚类":
                            xaxis_title='', yaxis_title='')
     st.plotly_chart(fig_heat, use_container_width=True)
     st.caption("💡 **解读**: 热力图将聚类中心归一化到 0-1 区间，颜色越绿表示该维度得分越高。可快速识别每个簇的'强项'和'弱项'——例如重要价值客户在各维度上得分接近 1，而流失客户各维度均偏低。组合特征方法使用 R_rank (时效性) + RFM_composite (参与度) 两个正交维度。")
+
+# ============================================================
+# 页面 5: 关联规则分析
+# ============================================================
+elif page == "🔗 关联规则分析":
+    st.title("🔗 关联规则分析 (Market Basket Analysis)")
+    st.markdown("基于 FP-Growth 算法挖掘商品共购模式，发现「买了 A 的客户也倾向买 B」的关联规则")
+
+    # --- 侧边栏参数 ---
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔗 关联规则参数")
+    assoc_min_support = st.sidebar.slider(
+        "最小支持度 (min_support)", min_value=0.005, max_value=0.10,
+        value=0.02, step=0.005, format="%.3f",
+        help="商品组合至少出现在多少比例的交易中。值越小规则越多但计算越慢。")
+    assoc_min_confidence = st.sidebar.slider(
+        "最小置信度 (min_confidence)", min_value=0.1, max_value=0.9,
+        value=0.3, step=0.05, format="%.2f",
+        help="规则 A→B 中，买 A 的客户有多大比例也买了 B。")
+    assoc_top_items = st.sidebar.slider(
+        "分析商品数 (Top-N)", min_value=50, max_value=300,
+        value=100, step=10,
+        help="只取购买频次最高的前 N 种商品参与分析，控制计算量。")
+
+    # --- 缓存计算 ---
+    @st.cache_data(show_spinner="正在运行 FP-Growth 关联规则挖掘...")
+    def cached_association(_df_hash, min_support, min_confidence, top_items):
+        basket = prepare_basket_matrix(cleaned_df, top_n_items=top_items)
+        result = run_fpgrowth(basket, min_support=min_support,
+                              min_confidence=min_confidence, min_lift=1.0)
+        cooc = compute_cooccurrence_matrix(basket, top_n=min(20, basket.shape[1]))
+        return result, basket.shape, cooc
+
+    # Use parameters as cache key (df is always the same cleaned_df)
+    assoc_result, basket_shape, cooc_matrix = cached_association(
+        len(cleaned_df), assoc_min_support, assoc_min_confidence, assoc_top_items)
+
+    rules_df = assoc_result['rules']
+    itemsets_df = assoc_result['itemsets']
+    n_transactions = assoc_result['n_transactions']
+    n_items = assoc_result['n_items']
+
+    # --- KPI 指标卡片 ---
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    with kpi1:
+        st.metric("分析交易数", f"{n_transactions:,}")
+    with kpi2:
+        st.metric("分析商品数", f"{n_items}")
+    with kpi3:
+        st.metric("频繁项集", f"{len(itemsets_df)}")
+    with kpi4:
+        st.metric("关联规则数", f"{len(rules_df)}")
+
+    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+
+    if rules_df.empty:
+        st.warning("当前参数下未找到满足条件的关联规则。请尝试降低最小支持度或最小置信度。")
+    else:
+        # --- 散点图: 支持度 vs 置信度, 颜色=提升度 ---
+        st.subheader("📊 规则质量分布 (支持度 × 置信度 × 提升度)")
+
+        scatter_df = rules_df.copy()
+        scatter_df['前项'] = scatter_df['antecedents'].apply(lambda x: ' + '.join(sorted(x)))
+        scatter_df['后项'] = scatter_df['consequents'].apply(lambda x: ' + '.join(sorted(x)))
+        scatter_df['规则'] = scatter_df['前项'] + ' → ' + scatter_df['后项']
+
+        fig_scatter = px.scatter(
+            scatter_df, x='support', y='confidence',
+            size='lift', color='lift',
+            color_continuous_scale='Viridis',
+            hover_data={'规则': True, 'support': ':.4f', 'confidence': ':.2%',
+                        'lift': ':.2f', '前项': False, '后项': False},
+            labels={'support': '支持度 (Support)', 'confidence': '置信度 (Confidence)',
+                    'lift': '提升度 (Lift)'},
+        )
+        fig_scatter.update_layout(**CHART_LAYOUT, height=480,
+                                  title="每条规则的支持度 vs 置信度 (气泡大小/颜色 = 提升度)")
+        st.plotly_chart(fig_scatter, use_container_width=True)
+        st.caption("💡 **解读**: 右上角的规则同时具有高支持度和高置信度，是最有价值的关联规则。"
+                   "颜色越亮 (提升度越高) 表示关联越强——提升度 > 1 说明两商品的出现不是偶然的，而是正相关。")
+
+        st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+
+        # --- 网络关系图 ---
+        st.subheader("🕸️ 商品关联网络图")
+
+        net_data = build_network_graph(rules_df, top_n=min(30, len(rules_df)))
+
+        if net_data['nodes']:
+            import networkx as nx
+
+            nodes = net_data['nodes']
+            edges = net_data['edges']
+            pos = net_data['pos']
+
+            # Edge traces
+            edge_x, edge_y = [], []
+            edge_hover = []
+            for e in edges:
+                x0, y0 = pos[e['source']]
+                x1, y1 = pos[e['target']]
+                edge_x += [x0, x1, None]
+                edge_y += [y0, y1, None]
+                edge_hover.append(f"{e['source']} → {e['target']}<br>"
+                                  f"提升度={e['lift']:.2f}, 置信度={e['confidence']:.1%}")
+
+            max_lift = max(e['lift'] for e in edges) if edges else 1
+            fig_net = go.Figure()
+
+            # Edges
+            fig_net.add_trace(go.Scatter(
+                x=edge_x, y=edge_y, mode='lines',
+                line=dict(width=1.5, color='rgba(150,150,150,0.5)'),
+                hoverinfo='text',
+                hovertext=edge_hover * (len(edge_x) // max(len(edge_hover), 1) + 1),
+                showlegend=False,
+            ))
+
+            # Nodes
+            node_x = [pos[n['id']][0] for n in nodes]
+            node_y = [pos[n['id']][1] for n in nodes]
+            node_size = [8 + n.get('degree', 1) * 4 for n in nodes]
+            node_text = [n['label'] for n in nodes]
+            node_hover = [f"<b>{n['label']}</b><br>关联数={n.get('degree', 0)}<br>"
+                          f"最大支持度={n.get('support', 0):.4f}" for n in nodes]
+
+            fig_net.add_trace(go.Scatter(
+                x=node_x, y=node_y, mode='markers+text',
+                marker=dict(size=node_size, color=COLORS['primary'], opacity=0.8,
+                            line=dict(width=1.5, color='white')),
+                text=node_text, textposition='top center',
+                textfont=dict(size=9, color='#374151'),
+                hoverinfo='text', hovertext=node_hover,
+                showlegend=False,
+            ))
+
+            fig_net.update_layout(**CHART_LAYOUT, height=600,
+                                  title="商品关联网络 (节点大小=关联数量，连线=关联规则方向)",
+                                  xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                  yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                  margin=dict(l=20, r=20, t=50, b=20))
+            st.plotly_chart(fig_net, use_container_width=True)
+            st.caption("💡 **解读**: 每个节点是一种商品，连线表示存在关联规则 (箭头方向: 前项→后项)。"
+                       "节点越大说明该商品参与的关联规则越多 (是「枢纽」商品)；连线越粗代表提升度越高。"
+                       "可以识别出哪些商品经常被一起购买，用于捆绑销售或货架陈列优化。")
+        else:
+            st.info("当前规则数量不足，无法生成网络图。")
+
+        st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+
+        # --- 共现热力图 ---
+        st.subheader("🔥 商品共现热力图 (Top 20)")
+        st.markdown("行商品出现时，列商品同时出现的条件概率 P(列|行)")
+
+        fig_cooc = px.imshow(
+            cooc_matrix.values,
+            x=cooc_matrix.columns.tolist(),
+            y=cooc_matrix.index.tolist(),
+            color_continuous_scale='YlOrRd',
+            aspect='auto',
+            labels={'color': 'P(列|行)'},
+        )
+        fig_cooc.update_layout(**CHART_LAYOUT, height=600,
+                               xaxis_tickangle=-45,
+                               xaxis_title='', yaxis_title='')
+        st.plotly_chart(fig_cooc, use_container_width=True)
+        st.caption("💡 **解读**: 颜色越深表示行商品出现时列商品也出现的概率越高。"
+                   "对角线始终为 1 (商品自身共现)。非对角线的高值区域揭示了强共购模式，"
+                   "可用于推荐系统和捆绑促销策略。")
+
+        st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+
+        # --- 规则详情表格 ---
+        st.subheader("📋 关联规则详情 (按提升度排序)")
+
+        display_rules = scatter_df[['规则', '前项', '后项', 'support', 'confidence', 'lift']].copy()
+        display_rules.columns = ['规则', '前项 (买了这个)', '后项 (也买了这个)',
+                                 '支持度', '置信度', '提升度']
+        display_rules['支持度'] = display_rules['支持度'].map(lambda x: f"{x:.4f}")
+        display_rules['置信度'] = display_rules['置信度'].map(lambda x: f"{x:.1%}")
+        display_rules['提升度'] = display_rules['提升度'].map(lambda x: f"{x:.2f}")
+
+        n_display = st.slider("显示规则数量", min_value=10, max_value=min(100, len(display_rules)),
+                              value=min(20, len(display_rules)), step=5)
+        st.dataframe(display_rules.head(n_display), use_container_width=True, hide_index=True)
+
+        with st.expander("📖 指标含义说明"):
+            st.markdown("""
+**支持度 (Support)**: 规则中所有商品同时出现在一笔交易中的概率。
+- 公式: P(A ∪ B) = 包含 A 和 B 的交易数 / 总交易数
+- 含义: 衡量规则的普遍性。支持度越高，说明这个组合越常见。
+
+**置信度 (Confidence)**: 在买了前项的条件下，也买后项的概率。
+- 公式: P(B|A) = 包含 A 和 B 的交易数 / 包含 A 的交易数
+- 含义: 衡量规则的可靠性。置信度 0.7 表示买了 A 的客户中 70% 也买了 B。
+
+**提升度 (Lift)**: 置信度相对于后项独立出现概率的倍数。
+- 公式: Lift = Confidence / P(B) = P(A∪B) / (P(A) × P(B))
+- 含义: Lift > 1 表示正相关 (买了 A 确实更倾向买 B)；Lift = 1 表示无关；Lift < 1 表示负相关。
+- **答辩重点**: 提升度是衡量关联规则是否有意义的最核心指标。一条规则即使置信度很高，
+  但如果后项本身就是热门商品 (P(B) 很大)，提升度可能接近 1，说明关联并不强。
+            """)
