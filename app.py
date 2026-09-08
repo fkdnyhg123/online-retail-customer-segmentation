@@ -1312,10 +1312,11 @@ elif page == "🔗 关联规则分析":
             ))
 
             fig_net.update_layout(**CHART_LAYOUT, height=600,
-                                  title="商品关联网络 (节点大小=关联数量，连线=关联规则方向)",
-                                  xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                  yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                  margin=dict(l=20, r=20, t=50, b=20))
+                                  title="商品关联网络 (节点大小=关联数量，连线=关联规则方向)")
+            fig_net.update_layout(
+                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                margin=dict(l=20, r=20, t=50, b=20))
             st.plotly_chart(fig_net, use_container_width=True)
             st.caption("💡 **解读**: 每个节点是一种商品，连线表示存在关联规则 (箭头方向: 前项→后项)。"
                        "节点越大说明该商品参与的关联规则越多 (是「枢纽」商品)；连线越粗代表提升度越高。"
