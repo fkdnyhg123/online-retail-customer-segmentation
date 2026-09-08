@@ -465,32 +465,65 @@ if page == "📈 数据概览":
     with col_d:
         st.metric("移除比例", f"{cleaning_summary['removal_pct']}%")
 
-    # 清洗前后对比图
-    st.markdown("#### 📊 清洗前后质量问题对比")
-    _issue_labels = ['取消订单', '缺失客户ID', '负数量', '零/负价格', '精确重复', '非商品编码']
-    _before = [quality_report['cancelled_orders'], quality_report['missing_customer_id'],
-               quality_report['negative_quantity'], quality_report['zero_neg_price'],
-               quality_report['exact_duplicates'], quality_report['special_stockcodes']]
-    _after = [cleaned_quality['cancelled_orders'], cleaned_quality['missing_customer_id'],
-              cleaned_quality['negative_quantity'], cleaned_quality['zero_neg_price'],
-              cleaned_quality['exact_duplicates'], cleaned_quality['special_stockcodes']]
+    # 清洗前后数据对比
+    st.markdown("#### 📊 清洗前后数据对比")
+
+    # 计算清洗前各项统计
+    _raw_rows = len(raw_df)
+    _raw_customers = raw_df['Customer ID'].nunique()
+    _raw_products = raw_df['StockCode'].nunique()
+    _raw_invoices = raw_df['Invoice'].nunique()
+    _clean_rows = len(cleaned_df)
+    _clean_customers = cleaned_df['Customer ID'].nunique()
+    _clean_products = cleaned_df['StockCode'].nunique()
+    _clean_invoices = cleaned_df['Invoice'].nunique()
+
+    _cmp_metrics = ['交易记录数', '客户数', '商品数', '发票数']
+    _cmp_before = [_raw_rows, _raw_customers, _raw_products, _raw_invoices]
+    _cmp_after = [_clean_rows, _clean_customers, _clean_products, _clean_invoices]
+
     _compare_df = pd.DataFrame({
-        '问题类型': _issue_labels * 2,
-        '数量': _before + _after,
-        '阶段': ['清洗前'] * 6 + ['清洗后'] * 6,
+        '指标': _cmp_metrics * 2,
+        '数量': _cmp_before + _cmp_after,
+        '阶段': ['清洗前'] * 4 + ['清洗后'] * 4,
     })
-    fig_compare = px.bar(_compare_df, x='问题类型', y='数量', color='阶段',
+    fig_compare = px.bar(_compare_df, x='指标', y='数量', color='阶段',
                          barmode='group',
                          color_discrete_map={'清洗前': COLORS['danger'], '清洗后': COLORS['success']},
-                         labels={'数量': '问题数量 (条)', '问题类型': '', '阶段': ''})
-    fig_compare.update_traces(textposition='outside', textfont=dict(size=11))
+                         labels={'数量': '数量', '指标': '', '阶段': ''})
+    fig_compare.update_traces(textposition='outside', textfont=dict(size=11),
+                              text=_compare_df['数量'].map(lambda x: f"{x:,}"))
     fig_compare.update_layout(
         **CHART_LAYOUT, height=380,
-        title="各类型质量问题: 清洗前 vs 清洗后",
+        title="数据规模: 清洗前 vs 清洗后",
         xaxis=dict(tickfont=dict(size=12)),
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5),
     )
     st.plotly_chart(fig_compare, use_container_width=True)
+
+    # 清洗前后详细对比表
+    _avg_qty_before = raw_df['Quantity'].mean()
+    _avg_qty_after = cleaned_df['Quantity'].mean()
+    _avg_price_before = raw_df[raw_df['Price'] > 0]['Price'].mean()
+    _avg_price_after = cleaned_df['Price'].mean()
+    _date_before = f"{raw_df['InvoiceDate'].min().date()} ~ {raw_df['InvoiceDate'].max().date()}"
+    _date_after = f"{cleaned_df['InvoiceDate'].min().date()} ~ {cleaned_df['InvoiceDate'].max().date()}"
+
+    _cmp_table = pd.DataFrame({
+        '对比项': ['交易记录数', '客户数', '商品数', '发票数', '平均数量', '平均单价', '时间范围'],
+        '清洗前': [f"{_raw_rows:,}", f"{_raw_customers:,}", f"{_raw_products:,}", f"{_raw_invoices:,}",
+                  f"{_avg_qty_before:.1f}", f"${_avg_price_before:.2f}", _date_before],
+        '清洗后': [f"{_clean_rows:,}", f"{_clean_customers:,}", f"{_clean_products:,}", f"{_clean_invoices:,}",
+                  f"{_avg_qty_after:.1f}", f"${_avg_price_after:.2f}", _date_after],
+        '变化': [f"-{_raw_rows - _clean_rows:,} ({(1 - _clean_rows/_raw_rows)*100:.1f}%)",
+                f"-{_raw_customers - _clean_customers:,}",
+                f"-{_raw_products - _clean_products:,}",
+                f"-{_raw_invoices - _clean_invoices:,}",
+                f"{_avg_qty_after - _avg_qty_before:+.1f}",
+                f"${_avg_price_after - _avg_price_before:+.2f}",
+                "不变"],
+    })
+    st.dataframe(_cmp_table, use_container_width=True, hide_index=True)
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -608,13 +641,18 @@ elif page == "🔍 数据探索":
             info = dist_stats[col]
             cfg = _seg_configs[col]
 
-            # 统计卡片 (紧凑等高)
-            stat_cards_row([
-                ('中位数', _fmt_val(info, info['p50'])),
-                ('均值', _fmt_val(info, info['mean'])),
-                ('中间50%范围', _fmt_range(info, info['p25'], info['p75'])),
-                ('前10%阈值', _fmt_val(info, info['p90'])),
-            ])
+            # 统计卡片 (metric-card 风格, 与核心指标一致)
+            _mc1, _mc2, _mc3, _mc4 = st.columns(4)
+            _mc_items = [
+                (_mc1, _fmt_val(info, info['p50']), '中位数'),
+                (_mc2, _fmt_val(info, info['mean']), '均值'),
+                (_mc3, _fmt_range(info, info['p25'], info['p75']), '中间50%范围'),
+                (_mc4, _fmt_val(info, info['p90']), '前10%阈值'),
+            ]
+            for _col, _val, _lab in _mc_items:
+                with _col:
+                    st.markdown(f'<div class="metric-card"><h2>{_val}</h2><p>{_lab}</p></div>',
+                                unsafe_allow_html=True)
 
             # 分段柱状图
             fig_seg = px.bar(
@@ -1233,12 +1271,73 @@ elif page == "🔗 关联规则分析":
     if rules_df.empty:
         st.warning("当前参数下未找到满足条件的关联规则。请尝试降低最小支持度或最小置信度。")
     else:
+        # --- 商品名中文翻译 ---
+        PRODUCT_CN = {
+            '60 TEATIME FAIRY CAKE CASES': '60个下午茶仙女蛋糕纸杯',
+            '72 SWEETHEART FAIRY CAKE CASES': '72个甜心仙女蛋糕纸杯',
+            'BLUE 3 PIECE MINI DOTS CUTLERY SET': '蓝色三件迷你圆点餐具套装',
+            'CHARLOTTE BAG , PINK/WHITE SPOTS': '夏洛特袋 粉白圆点',
+            'CHOCOLATE HOT WATER BOTTLE': '巧克力色热水袋',
+            'COOK WITH WINE METAL SIGN': '烹饪用酒金属标牌',
+            'CREAM HEART CARD HOLDER': '奶油色心形卡片架',
+            'GIN + TONIC DIET METAL SIGN': '金汤力减肥金属标牌',
+            'HEART OF WICKER LARGE': '大号藤编心形装饰',
+            'HEART OF WICKER SMALL': '小号藤编心形装饰',
+            'HOME BUILDING BLOCK WORD': 'HOME字母积木装饰',
+            'HOT WATER BOTTLE TEA AND SYMPATHY': '茶与同情热水袋',
+            'JUMBO  BAG BAROQUE BLACK WHITE': '超大购物袋 巴洛克黑白',
+            'JUMBO BAG PINK VINTAGE PAISLEY': '超大购物袋 粉色复古佩斯利',
+            'JUMBO BAG PINK WITH WHITE SPOTS': '超大购物袋 粉白圆点',
+            'JUMBO BAG RED WHITE SPOTTY': '超大购物袋 红白圆点',
+            'JUMBO BAG SCANDINAVIAN PAISLEY': '超大购物袋 北欧佩斯利',
+            'JUMBO BAG STRAWBERRY': '超大购物袋 草莓图案',
+            'JUMBO SHOPPER VINTAGE RED PAISLEY': '超大购物袋 复古红佩斯利',
+            'JUMBO STORAGE BAG SUKI': '超大收纳袋 SUKI款',
+            'LOVE BUILDING BLOCK WORD': 'LOVE字母积木装饰',
+            'LUNCH BAG  BLACK SKULL.': '午餐袋 黑色骷髅',
+            'LUNCH BAG CARS BLUE': '午餐袋 蓝色汽车',
+            'LUNCH BAG RED SPOTTY': '午餐袋 红色圆点',
+            'LUNCH BAG WOODLAND': '午餐袋 森林图案',
+            'LUNCHBAG PINK RETROSPOT': '午餐袋 粉色复古圆点',
+            'LUNCHBAG SPACEBOY DESIGN': '午餐袋 太空男孩',
+            'LUNCHBAG SUKI  DESIGN': '午餐袋 SUKI款',
+            'PACK OF 60 DINOSAUR CAKE CASES': '60个恐龙蛋糕纸杯',
+            'PACK OF 60 PINK PAISLEY CAKE CASES': '60个粉色佩斯利蛋糕纸杯',
+            'PACK OF 72 RETRO SPOT CAKE CASES': '72个复古圆点蛋糕纸杯',
+            'PACK OF 72 SKULL CAKE CASES': '72个骷髅蛋糕纸杯',
+            'PINK 3 PIECE MINI DOTS CUTLERY SET': '粉色三件迷你圆点餐具套装',
+            'PINK BLUE FELT CRAFT TRINKET BOX': '粉蓝色毛毡首饰盒',
+            'PINK CREAM FELT CRAFT TRINKET BOX': '粉色奶油毛毡首饰盒',
+            'PLEASE ONE PERSON  METAL SIGN': '请限一人金属标牌',
+            'RED 3 PIECE MINI DOTS CUTLERY SET': '红色三件迷你圆点餐具套装',
+            'RED HANGING HEART T-LIGHT HOLDER': '红色悬挂心形烛台',
+            'RED SPOT HEART HOT WATER BOTTLE': '红点心形热水袋',
+            'RED SPOTTY CHARLOTTE BAG': '红色圆点夏洛特袋',
+            'SCOTTIE DOG HOT WATER BOTTLE': '苏格兰犬热水袋',
+            'SET/20 RED SPOTTY PAPER NAPKINS': '20张红色圆点纸餐巾',
+            'STRAWBERRY CERAMIC TRINKET BOX': '草莓陶瓷首饰盒',
+            'SWEETHEART CERAMIC TRINKET BOX': '甜心陶瓷首饰盒',
+            'VINTAGE HEADS AND TAILS CARD GAME': '复古正反面卡牌游戏',
+            'VINTAGE SNAP CARDS': '复古拍牌游戏卡牌',
+            'WHITE HANGING HEART T-LIGHT HOLDER': '白色悬挂心形烛台',
+            'WOOD 2 DRAWER CABINET WHITE FINISH': '白色双抽木柜',
+            'WOOD S/3 CABINET ANT WHITE FINISH': '白色三层小木柜',
+            'WOODEN FRAME ANTIQUE WHITE': '白色复古木相框',
+            'WOODEN PICTURE FRAME WHITE FINISH': '白色木相框',
+            'ZINC METAL HEART DECORATION': '锌金属心形装饰',
+        }
+
+        def _cn(name):
+            return PRODUCT_CN.get(name, name)
+
         # --- 散点图: 支持度 vs 置信度, 颜色=提升度 ---
         st.subheader("📊 规则质量分布 (支持度 × 置信度 × 提升度)")
 
         scatter_df = rules_df.copy()
-        scatter_df['前项'] = scatter_df['antecedents'].apply(lambda x: ' + '.join(sorted(x)))
-        scatter_df['后项'] = scatter_df['consequents'].apply(lambda x: ' + '.join(sorted(x)))
+        scatter_df['前项'] = scatter_df['antecedents'].apply(
+            lambda x: ' + '.join(_cn(i) for i in sorted(x)))
+        scatter_df['后项'] = scatter_df['consequents'].apply(
+            lambda x: ' + '.join(_cn(i) for i in sorted(x)))
         scatter_df['规则'] = scatter_df['前项'] + ' → ' + scatter_df['后项']
 
         fig_scatter = px.scatter(
@@ -1278,7 +1377,7 @@ elif page == "🔗 关联规则分析":
                 x1, y1 = pos[e['target']]
                 edge_x += [x0, x1, None]
                 edge_y += [y0, y1, None]
-                edge_hover.append(f"{e['source']} → {e['target']}<br>"
+                edge_hover.append(f"{_cn(e['source'])} → {_cn(e['target'])}<br>"
                                   f"提升度={e['lift']:.2f}, 置信度={e['confidence']:.1%}")
 
             max_lift = max(e['lift'] for e in edges) if edges else 1
@@ -1297,8 +1396,8 @@ elif page == "🔗 关联规则分析":
             node_x = [pos[n['id']][0] for n in nodes]
             node_y = [pos[n['id']][1] for n in nodes]
             node_size = [8 + n.get('degree', 1) * 4 for n in nodes]
-            node_text = [n['label'] for n in nodes]
-            node_hover = [f"<b>{n['label']}</b><br>关联数={n.get('degree', 0)}<br>"
+            node_text = [_cn(n['label']) for n in nodes]
+            node_hover = [f"<b>{_cn(n['label'])}</b><br>关联数={n.get('degree', 0)}<br>"
                           f"最大支持度={n.get('support', 0):.4f}" for n in nodes]
 
             fig_net.add_trace(go.Scatter(
@@ -1332,8 +1431,8 @@ elif page == "🔗 关联规则分析":
 
         fig_cooc = px.imshow(
             cooc_matrix.values,
-            x=cooc_matrix.columns.tolist(),
-            y=cooc_matrix.index.tolist(),
+            x=[_cn(c) for c in cooc_matrix.columns.tolist()],
+            y=[_cn(c) for c in cooc_matrix.index.tolist()],
             color_continuous_scale='YlOrRd',
             aspect='auto',
             labels={'color': 'P(列|行)'},
