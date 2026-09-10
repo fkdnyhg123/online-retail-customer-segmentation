@@ -10,6 +10,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 import os
 import sys
+import json
+import hashlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -191,14 +193,40 @@ CHART_LAYOUT = dict(
 # ============================================================
 # 数据加载 (缓存)
 # ============================================================
+def _cache_fingerprint(filepath: str) -> str:
+    """数据文件 + 清洗模块的内容指纹, 任一变化即令 Parquet 缓存失效。
+    用内容哈希而非 mtime: Streamlit Cloud 每次检出仓库都会重写文件时间戳, 比较结果不可靠。"""
+    h = hashlib.sha256()
+    targets = [filepath, os.path.join(os.path.dirname(filepath), 'utils', 'data_cleaner.py')]
+    for p in targets:
+        h.update(os.path.basename(str(p)).encode('utf-8'))
+        try:
+            with open(p, 'rb') as f:
+                for chunk in iter(lambda: f.read(1 << 20), b''):
+                    h.update(chunk)
+        except OSError:
+            h.update(b'<missing>')
+    return h.hexdigest()
+
+
 @st.cache_data(show_spinner="正在加载数据集，请稍候...")
 def load_and_clean(filepath):
     _dir = os.path.dirname(filepath)
     _raw_pq = os.path.join(_dir, '.cache_raw.parquet')
     _clean_pq = os.path.join(_dir, '.cache_cleaned.parquet')
+    _meta_pq = os.path.join(_dir, '.cache_meta.json')
 
     # Parquet 缓存: 首次从 Excel 读取后存为 Parquet，后续直接读 Parquet (快 10-20x)
-    if os.path.exists(_raw_pq) and os.path.exists(_clean_pq):
+    _fp = _cache_fingerprint(filepath)
+    _cache_hit = os.path.exists(_raw_pq) and os.path.exists(_clean_pq)
+    if _cache_hit:
+        try:
+            with open(_meta_pq, encoding='utf-8') as f:
+                _cache_hit = json.load(f).get('fingerprint') == _fp
+        except (OSError, ValueError):
+            _cache_hit = False
+
+    if _cache_hit:
         raw_df = pd.read_parquet(_raw_pq)
         cleaned_df = pd.read_parquet(_clean_pq)
     else:
@@ -211,8 +239,10 @@ def load_and_clean(filepath):
                 cleaned_df[col] = cleaned_df[col].astype(str)
             raw_df.to_parquet(_raw_pq, index=False, engine='pyarrow')
             cleaned_df.to_parquet(_clean_pq, index=False, engine='pyarrow')
+            with open(_meta_pq, 'w', encoding='utf-8') as f:
+                json.dump({'fingerprint': _fp}, f)
         except Exception:
-            pass  # 如果 pyarrow 不可用则跳过缓存
+            pass  # 磁盘不可写或缺 pyarrow 时跳过缓存
 
     quality_report = get_data_quality_report(raw_df)
     cleaned_quality = get_data_quality_report(cleaned_df)
@@ -1450,15 +1480,17 @@ elif page == "🔗 关联规则分析":
             # Edge traces
             edge_x, edge_y = [], []
             edge_hover = []
+            # 每条边在 edge_x/edge_y 中占 3 个点 (x0, x1, None 分隔符),
+            # hovertext 必须逐点对齐, 否则标签会整体串位
             for e in edges:
                 x0, y0 = pos[e['source']]
                 x1, y1 = pos[e['target']]
                 edge_x += [x0, x1, None]
                 edge_y += [y0, y1, None]
-                edge_hover.append(f"{_cn(e['source'])} → {_cn(e['target'])}<br>"
-                                  f"提升度={e['lift']:.2f}, 置信度={e['confidence']:.1%}")
+                _h = (f"{_cn(e['source'])} → {_cn(e['target'])}<br>"
+                      f"提升度={e['lift']:.2f}, 置信度={e['confidence']:.1%}")
+                edge_hover += [_h, _h, ""]
 
-            max_lift = max(e['lift'] for e in edges) if edges else 1
             fig_net = go.Figure()
 
             # Edges
@@ -1466,7 +1498,7 @@ elif page == "🔗 关联规则分析":
                 x=edge_x, y=edge_y, mode='lines',
                 line=dict(width=1.5, color='rgba(150,150,150,0.5)'),
                 hoverinfo='text',
-                hovertext=edge_hover * (len(edge_x) // max(len(edge_hover), 1) + 1),
+                hovertext=edge_hover,
                 showlegend=False,
             ))
 
@@ -1496,7 +1528,7 @@ elif page == "🔗 关联规则分析":
                 margin=dict(l=20, r=20, t=50, b=20))
             st.plotly_chart(fig_net, use_container_width=True)
             st.caption("💡 **解读**: 每个节点是一种商品，连线表示存在关联规则 (箭头方向: 前项→后项)。"
-                       "节点越大说明该商品参与的关联规则越多 (是「枢纽」商品)；连线越粗代表提升度越高。"
+                       "节点越大说明该商品参与的关联规则越多 (是「枢纽」商品)；鼠标悬停连线可查看该规则的提升度与置信度。"
                        "可以识别出哪些商品经常被一起购买，用于捆绑销售或货架陈列优化。")
         else:
             st.info("当前规则数量不足，无法生成网络图。")
