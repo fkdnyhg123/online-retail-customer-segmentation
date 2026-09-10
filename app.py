@@ -361,6 +361,26 @@ def cached_run_kmeans(_rfm_df, n_clusters, method, winsorize_pct):
     return run_kmeans(_rfm_df, n_clusters=n_clusters, method=method,
                       winsorize_pct=winsorize_pct)
 
+
+@st.cache_data(show_spinner="正在对比三种特征工程方法...")
+def cached_compare_methods(_rfm_df, compare_k, winsorize_pct):
+    """在同一 K 值下动态计算三种方法的轮廓系数, 供对比表格使用 (避免硬编码)"""
+    out = {}
+    for m in ['composite', 'rank', 'log']:
+        try:
+            r = run_kmeans(_rfm_df, n_clusters=compare_k, method=m,
+                           winsorize_pct=winsorize_pct)
+            out[m] = {
+                'silhouette': round(float(r['silhouette_score']), 4),
+                'dims': len(prepare_features(_rfm_df, method=m,
+                                             winsorize_pct=winsorize_pct)[1]),
+                'ok': True,
+            }
+        except Exception as e:
+            out[m] = {'silhouette': float('nan'), 'dims': 0, 'ok': False,
+                      'err': str(e)}
+    return out
+
 # ============================================================
 # 侧边栏导航
 # ============================================================
@@ -869,8 +889,8 @@ elif page == "🎯 K-Means 聚类":
     # 侧边栏参数控制
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ⚙️ 聚类参数")
-    k_range_start = st.sidebar.number_input("K 搜索范围 (起始)", min_value=2, max_value=5, value=2, step=1)
-    k_range_end = st.sidebar.number_input("K 搜索范围 (结束)", min_value=6, max_value=15, value=10, step=1)
+    k_range_start = st.sidebar.number_input("K 搜索范围 (起始)", min_value=2, max_value=14, value=2, step=1)
+    k_range_end = st.sidebar.number_input("K 搜索范围 (结束)", min_value=int(k_range_start) + 1, max_value=15, value=10, step=1)
     cluster_method = st.sidebar.selectbox(
         "特征变换方法",
         options=['composite', 'rank', 'log'],
@@ -879,12 +899,12 @@ elif page == "🎯 K-Means 聚类":
             'rank': '百分位排名 3D',
             'log': '对数变换 3D',
         }[x],
-        help="组合特征: R_rank + RFM_composite (2D)，消除F/M相关性冗余，轮廓系数最高"
+        help="组合特征: 构造 [R_rank, R_rank+F_rank+M_rank] 二维空间, 将 K-Means 从 3D 降到 2D, 在本数据集上轮廓系数最高 (注意: 两维包含共同的 R_rank, 存在正相关, 非严格正交)"
     )
     winsorize_pct = st.sidebar.slider("Winsorize 截断 (上分位)", min_value=0.95, max_value=1.0,
                                        value=0.995, step=0.005, format="%.3f",
                                        help="将 F/M 超过该分位数的值截断，默认 0.995 (截断 top 0.5%)")
-    selected_k = st.sidebar.slider("聚类数量 K", min_value=2, max_value=10, value=5, step=1)
+    selected_k = st.sidebar.slider("聚类数量 K", min_value=2, max_value=15, value=5, step=1)
 
     # 特征准备 + 最优 K 搜索 (缓存)
     scaled, feature_names, scaler, transformed_df, elbow_result = cached_prepare_and_elbow(
@@ -936,29 +956,35 @@ elif page == "🎯 K-Means 聚类":
             xaxis_title='聚类数 K', yaxis_title='轮廓系数',
             height=400)
         st.plotly_chart(fig_sil, use_container_width=True)
-        st.caption("💡 **轮廓系数**: 衡量簇内紧密度和簇间分离度，取值 -1~1。越高表示簇内样本越紧密、不同簇之间分离越清晰。⭐ 标记为 K≥3 范围内的推荐 K (K=2 虽系数最高，但只是“活跃/沉睡”的粗略二分，无业务意义)。")
+        st.caption("💡 **轮廓系数**: 衡量簇内紧密度和簇间分离度，取值 -1~1。越高表示簇内样本越紧密、不同簇之间分离越清晰。⭐ 标记为 K≥3 范围内的推荐 K (K=2 系数虽最高，对应粗粒度的\"活跃/沉睡\"二分，但对精细化营销而言粒度不足)。")
 
-    st.info(f"**K 值选择依据**: 轮廓系数在 K=2 处最高 ({elbow_result['best_silhouette']:.4f})，但那只是把客户粗分成“活跃/沉睡”两类，没有业务价值；"
-            f"在 K≥3 范围内曲线进入平台期 (推荐 K={rec_k}，轮廓系数 {rec_sil:.4f})，肘部法则拐点也落在 4-5 附近。"
-            f"综合考虑，K=4-6 均合理，本项目取 **K=5** 以对应经典的 RFM 五类业务分群 (重要价值/重要发展/重要保持/新客户/流失类)。当前选择 **K = {selected_k}**。")
+    st.info(f"**K 值选择依据**: 轮廓系数在 K=2 处最高 ({elbow_result['best_silhouette']:.4f})，"
+            f"说明数据本身具有显著的\"活跃 vs 沉睡\"双峰结构——这是最有统计证据的一层分群，"
+            f"对判断客户整体健康度很有价值。但精细化营销 (差异化触达 / 挽留预算分配) 通常需要更细的粒度："
+            f"在 K≥3 范围内曲线进入平台期 (推荐 K={rec_k}，轮廓系数 {rec_sil:.4f})，"
+            f"肘部法则拐点也大致落在 4-5 区间。综合考虑**统计指标**与**业务分群惯例**，"
+            f"K=4-6 均合理，本项目取 **K=5** 对应经典的 RFM 五类业务分群 "
+            f"(重要价值 / 重要发展 / 重要保持 / 新客户 / 流失)。当前选择 **K = {selected_k}**。")
 
     with st.expander("🔬 三种方法对比 — 为什么推荐组合特征 2D？(点击展开)"):
         st.markdown("""
-        **核心矛盾**: K-Means 依赖欧氏距离，对 F 和 M 的极度右偏极其敏感 (F 偏度 9.98, M 偏度 24.32)。
-        同时 F 和 M 呈中高度正相关 (r≈0.65)，在 3D 空间中产生冗余维度，降低簇间分离度。
+        **核心矛盾**: K-Means 依赖欧氏距离, 对 F/M 的极度右偏 (F 偏度 ~10, M 偏度 ~24) 与两者之间的中高度正相关 (r ≈ 0.65) 都很敏感。3 维空间里 F 与 M 传递高度相似的信息, 相当于把它们对距离的贡献隐式放大。
 
         **三种方法对比**:
 
-        | 方法 | 维度 | 特征 | K=5 轮廓系数 | 说明 |
-        |:---|:---:|------|:---:|------|
-        | **组合特征** | 2D | R_rank + RFM_composite | **0.42** ⭐ | 合并 F/M 为"参与度"，消除冗余 |
-        | 百分位排名 | 3D | R_rank + F_rank + M_rank | 0.36 | 标准 rank，3个独立维度 |
-        | 对数变换 | 3D | log(R) + log(F) + log(M) | 0.32 | 传统方法，压缩效果有限 |
+        | 方法 | 维度 | 特征构造 | 优点 | 局限 |
+        |:---|:---:|---------|------|------|
+        | **组合特征** (本项目采用) | 2D | `[R_rank, R_rank+F_rank+M_rank]` | 降维到 2D 缓解维度灾难; 本数据集上轮廓系数最高 | 两维共享 `R_rank`, 存在正相关 (≈0.6), **非严格正交** |
+        | 百分位排名 | 3D | `[R_rank, F_rank, M_rank]` | 三维语义清晰、无重复维度 | F/M 高度相关仍造成隐式加权, 分离度不如 2D |
+        | 对数变换 | 3D | `[log(R), log(F), log(M)]` | 传统方法, 直观 | 右偏压缩效果有限, 簇重叠严重 |
 
-        **为什么 2D 组合特征更好？**
-        1. **消除冗余**: F (购买频率) 和 M (消费金额) 天然正相关——买得多自然花得多。在 3D 空间中，这两个维度传递的是相似信息，导致 K-Means 的"注意力"被重复消耗。
-        2. **降维提升分离度**: 将 R/F/M 压缩为 2 个正交维度——**时效性** (R_rank: 最近购买排名) 和 **参与度** (RFM_composite: 三个排名之和)。2D 空间中簇更容易被清晰分离。
-        3. **业务直觉**: 时效性 × 参与度 恰好构成经典的客户分群矩阵——近期活跃的高参与度客户 = 重要价值客户，长期沉睡的低参与度客户 = 流失客户。
+        **为什么选 composite 而不是 rank?**
+
+        1. **降维带来的分离度提升**: 从 3D 降到 2D 后, K-Means 的样本密度显著上升, 距离度量不再受"多余维度稀释", 簇间分离度更好。
+        2. **合并 F/M 消除隐式加权**: `RFM_composite` 把 F 与 M 打包为一个"参与度"标量, 避免它们因高度相关而在欧氏距离中被重复计入。
+        3. **业务直觉**: 时效性 × 参与度 恰好构成经典的客户分群矩阵——近期活跃的高参与度客户 = 重要价值客户, 长期沉睡的低参与度客户 = 流失客户。
+
+        **需要注意的取舍**: `R_rank` 同时是第 1 维和第 2 维的组成部分, 严格讲两维不正交, 相当于把 R 在距离中"算了两次"。这是本项目**用简单性换取可解释性**的自觉取舍——从数据表现看, 2D 分离度仍显著优于 3D rank 方法; 若追求严格正交, 可考虑 PCA 降维。
 
         **4 步优化流程 (三种方法共用)**:
         1. **Winsorizing**: 截断 F/M 的 top 0.5% 极端值
@@ -966,6 +992,21 @@ elif page == "🎯 K-Means 聚类":
         3. **StandardScaler**: Z-score 标准化
         4. **K-Means**: `n_init=50, max_iter=500` 避免局部最优
         """)
+
+        st.markdown(f"**📊 实时对比 (K={selected_k}, Winsorize={winsorize_pct:.3f})**:")
+        _cmp = cached_compare_methods(rfm_df, selected_k, winsorize_pct)
+        _method_labels = {'composite': '组合特征 2D', 'rank': '百分位排名 3D', 'log': '对数变换 3D'}
+        _cmp_rows = []
+        for _m in ['composite', 'rank', 'log']:
+            _v = _cmp[_m]
+            _cmp_rows.append({
+                '方法': _method_labels[_m],
+                '维度': _v['dims'],
+                '轮廓系数': f"{_v['silhouette']:.4f}" if _v.get('ok') else '计算失败',
+                '是否本项目首选': '⭐' if _m == 'composite' else '',
+            })
+        st.dataframe(pd.DataFrame(_cmp_rows), use_container_width=True, hide_index=True)
+        st.caption("💡 上表数值随侧边栏 K 与 Winsorize 参数实时变化, 非固定参考值。")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -1053,6 +1094,7 @@ elif page == "🎯 K-Means 聚类":
                     font=dict(size=15), itemsizing='constant'),
     )
     st.plotly_chart(fig_3d, use_container_width=True)
+    st.caption("💡 **可视化说明**: 为防止极端离群值 (如个别客户 Monetary 高达数十万) 把主云团压成一小团, 三个坐标轴均截断至 **99 分位**。因此图中显示的菱形群中心是\"截断后坐标空间\"的均值, 与下方\"聚类画像\"表中未截断的原始真实群均值可能存在少量差异, 属于合理的可视化取舍。如需精确数值, 请以下方画像表与热力图为准。")
 
     # 2D 特征空间散点图 (聚类实际发生的空间)
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -1069,11 +1111,42 @@ elif page == "🎯 K-Means 聚类":
 
     if len(feature_names) == 2:
         _fx, _fy = feature_names[0], feature_names[1]
-        _xl = 'R-时效性 (排名)' if _fx == 'R_rank' else _fx
-        _yl = 'RFM-参与度 (综合排名)' if _fy == 'RFM_composite' else _fy
+        _dim_note = ""
     else:
-        _fx, _fy = feature_names[0], feature_names[1]
-        _xl, _yl = _fx, _fy
+        # 3D 方法: 让用户选择展示哪两个维度 (聚类实际发生在 3D, 此处为 2D 切片)
+        _axis_names = {
+            'Recency': 'R (最近购买)', 'Frequency': 'F (购买频率)', 'Monetary': 'M (消费金额)',
+        }
+        _pairs = [(feature_names[i], feature_names[j])
+                  for i in range(len(feature_names))
+                  for j in range(i + 1, len(feature_names))]
+        _picked = st.selectbox(
+            "当前方法在 3D 空间聚类, 请选择展示哪两个维度 (点击切换不同切片):",
+            options=_pairs,
+            index=0,
+            format_func=lambda t: f"{_axis_names.get(t[0], t[0])} vs {_axis_names.get(t[1], t[1])}",
+            key=f"dim_pair_{cluster_method}",
+        )
+        _fx, _fy = _picked
+        _dim_note = f" — 3D 空间切片 (完整聚类维度: {', '.join(_axis_names.get(c, c) for c in feature_names)})"
+
+    _xl = _fx if _fx not in ('R_rank',) else 'R-时效性 (排名)'
+    if _fy == 'RFM_composite':
+        _yl = 'RFM-参与度 (综合排名)'
+    else:
+        _yl = _fy
+    if _fx == 'Recency' and cluster_method == 'log':
+        _xl = 'log(R)'
+    elif _fx == 'Frequency' and cluster_method == 'log':
+        _xl = 'log(F)'
+    elif _fx == 'Monetary' and cluster_method == 'log':
+        _xl = 'log(M)'
+    if _fy == 'Recency' and cluster_method == 'log':
+        _yl = 'log(R)'
+    elif _fy == 'Frequency' and cluster_method == 'log':
+        _yl = 'log(F)'
+    elif _fy == 'Monetary' and cluster_method == 'log':
+        _yl = 'log(M)'
 
     fig_2d = px.scatter(
         plot_2d, x=_fx, y=_fy,
@@ -1084,7 +1157,7 @@ elif page == "🎯 K-Means 聚类":
         labels={_fx: _xl, _fy: _yl},
     )
     fig_2d.update_layout(**CHART_LAYOUT, height=500,
-                         title="聚类特征空间散点图 (支持框选交互)")
+                         title=f"聚类特征空间散点图 (支持框选交互){_dim_note}")
     selection = st.plotly_chart(fig_2d, use_container_width=True, selection_mode="points",
                                 on_select="rerun", key="scatter_2d")
 
@@ -1118,10 +1191,15 @@ elif page == "🎯 K-Means 聚类":
     with col_right:
         st.subheader("🕸️ 雷达图 (Radar Chart)")
         norm_profile = profile.copy()
+        _RADAR_MIN = 0.15  # 避免最差簇归 0 塌缩到圆心
         for col in ['Avg_Recency', 'Avg_Frequency', 'Avg_Monetary']:
-            norm_profile[col] = (norm_profile[col] - norm_profile[col].min()) / \
-                                (norm_profile[col].max() - norm_profile[col].min() + 1e-10)
-        norm_profile['Avg_Recency'] = 1 - norm_profile['Avg_Recency']
+            _rng = norm_profile[col].max() - norm_profile[col].min()
+            if _rng < 1e-10:
+                norm_profile[col] = 0.5
+            else:
+                norm_profile[col] = _RADAR_MIN + (1 - _RADAR_MIN) * (
+                    norm_profile[col] - norm_profile[col].min()) / _rng
+        norm_profile['Avg_Recency'] = (1 + _RADAR_MIN) - norm_profile['Avg_Recency']
 
         categories = ['R-最近购买*', 'F-购买频率', 'M-消费金额']
         fig_radar = go.Figure()
@@ -1212,7 +1290,7 @@ elif page == "🎯 K-Means 聚类":
     fig_heat.update_layout(**CHART_LAYOUT, height=400,
                            xaxis_title='', yaxis_title='')
     st.plotly_chart(fig_heat, use_container_width=True)
-    st.caption("💡 **解读**: 热力图将聚类中心归一化到 0-1 区间，颜色越绿表示该维度得分越高。可快速识别每个簇的'强项'和'弱项'——例如重要价值客户在各维度上得分接近 1，而流失客户各维度均偏低。组合特征方法使用 R_rank (时效性) + RFM_composite (参与度) 两个正交维度。")
+    st.caption("💡 **解读**: 热力图将聚类中心归一化到 0-1 区间，颜色越绿表示该维度得分越高。可快速识别每个簇的'强项'和'弱项'——例如重要价值客户在各维度上得分接近 1，而流失客户各维度均偏低。组合特征方法将 R/F/M 压缩为 2 个可解释维度——**时效性 (R_rank)** 与 **综合参与度 (RFM_composite = R+F+M 排名之和)**; 两维共享 R 项, 存在正相关而非严格正交, 属于用简单性换可解释性的自觉取舍 (详见「三种方法对比」展开)。")
 
 # ============================================================
 # 页面 5: 关联规则分析
