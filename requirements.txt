@@ -1,4 +1,5 @@
-streamlit>=1.30.0
+# 下限由 app.py 的 width='stretch' 决定 (旧版不认字符串 width, 会 TypeError)
+streamlit>=1.62.0
 plotly>=5.18.0
 scikit-learn>=1.4.0
 pandas>=2.0.0

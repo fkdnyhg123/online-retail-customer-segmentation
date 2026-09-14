@@ -489,7 +489,7 @@ if page == "📈 数据概览":
                              color_discrete_sequence=COLORS['palette'])
         fig_quality.update_layout(**CHART_LAYOUT, height=380,
                                   title="原始数据质量问题分布")
-        st.plotly_chart(fig_quality, use_container_width=True)
+        st.plotly_chart(fig_quality, width='stretch')
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -554,7 +554,7 @@ if page == "📈 数据概览":
         xaxis=dict(tickfont=dict(size=12)),
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='center', x=0.5),
     )
-    st.plotly_chart(fig_compare, use_container_width=True)
+    st.plotly_chart(fig_compare, width='stretch')
 
     # 清洗前后详细对比表
     _avg_qty_before = raw_df['Quantity'].mean()
@@ -578,7 +578,7 @@ if page == "📈 数据概览":
                 f"${_avg_price_after - _avg_price_before:+.2f}",
                 "不变"],
     })
-    st.dataframe(_cmp_table, use_container_width=True, hide_index=True)
+    st.dataframe(_cmp_table, width='stretch', hide_index=True)
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -622,7 +622,7 @@ if page == "📈 数据概览":
                               color_discrete_sequence=[COLORS['primary']])
         fig_revenue.update_layout(**CHART_LAYOUT, height=420, hovermode='x unified',
                                   xaxis_title='日期', yaxis_title='收入 (美元 $)')
-        st.plotly_chart(fig_revenue, use_container_width=True)
+        st.plotly_chart(fig_revenue, width='stretch')
 
     with col_right:
         st.subheader("🌍 国家收入排名 Top 10")
@@ -639,7 +639,7 @@ if page == "📈 数据概览":
         fig_country.update_layout(**CHART_LAYOUT, height=420, showlegend=False,
                                   yaxis={'categoryorder': 'total ascending'},
                                   xaxis_title='收入 (美元 $)')
-        st.plotly_chart(fig_country, use_container_width=True)
+        st.plotly_chart(fig_country, width='stretch')
 
 # ============================================================
 # 页面 2: 数据探索
@@ -729,7 +729,7 @@ elif page == "🔍 数据探索":
                 xaxis=dict(tickfont=dict(size=13)),
                 yaxis=dict(title='订单数'),
             )
-            st.plotly_chart(fig_seg, use_container_width=True)
+            st.plotly_chart(fig_seg, width='stretch')
 
             st.markdown(
                 f"下四分位: **{_fmt_val(info, info['p25'])}** · "
@@ -750,7 +750,7 @@ elif page == "🔍 数据探索":
     fig_top.update_layout(**CHART_LAYOUT, height=max(350, top_n * 32), showlegend=False,
                           yaxis={'categoryorder': 'total ascending'},
                           xaxis_title='总收入 (美元 $)')
-    st.plotly_chart(fig_top, use_container_width=True)
+    st.plotly_chart(fig_top, width='stretch')
     st.caption("💡 **解读**: 热销商品以家居装饰和节日用品为主。排名靠前的商品 (如 WHITE HANGING HEART T-LIGHT HOLDER) 具有明显的爆款特征，收入远超其他商品。长尾分布表明少量头部商品贡献了大部分收入。")
 
 # ============================================================
@@ -800,7 +800,7 @@ elif page == "💰 RFM 分析":
                 yaxis=dict(title='客户数'),
             )
             fig_seg.update_layout(margin=dict(l=50, r=10, t=50, b=60))
-            st.plotly_chart(fig_seg, use_container_width=True)
+            st.plotly_chart(fig_seg, width='stretch')
 
     _r_med_txt = _fmt_val(rfm_seg['Recency'], rfm_seg['Recency']['p50'])
     _f_dom, _f_dom_pct = _dominant_bin(rfm_seg['Frequency'])
@@ -837,7 +837,7 @@ elif page == "💰 RFM 分析":
                              aspect='auto',
                              labels={'color': '相关系数'})
         fig_corr.update_layout(**CHART_LAYOUT, height=340)
-        st.plotly_chart(fig_corr, use_container_width=True)
+        st.plotly_chart(fig_corr, width='stretch')
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
     st.subheader("🔗 RFM 维度相关性")
@@ -849,7 +849,7 @@ elif page == "💰 RFM 分析":
                             hover_data=['Customer ID'], opacity=0.6)
         fig_rf.update_layout(**CHART_LAYOUT, title="频率 vs 最近购买 (气泡大小/颜色 = 消费金额)",
                              xaxis_title='购买频率 (次)', yaxis_title='最近购买间隔 (天)', height=450)
-        st.plotly_chart(fig_rf, use_container_width=True)
+        st.plotly_chart(fig_rf, width='stretch')
 
     with col2:
         fig_fm = px.scatter(rfm_df, x='Frequency', y='Monetary',
@@ -858,7 +858,7 @@ elif page == "💰 RFM 分析":
                             hover_data=['Customer ID'], opacity=0.6)
         fig_fm.update_layout(**CHART_LAYOUT, title="频率 vs 消费金额 (气泡大小/颜色 = 最近购买)",
                              xaxis_title='购买频率 (次)', yaxis_title='消费金额 ($)', height=450)
-        st.plotly_chart(fig_fm, use_container_width=True)
+        st.plotly_chart(fig_fm, width='stretch')
 
     st.caption("💡 **解读**: 左图 (频率 vs 最近购买) 中气泡大小和颜色代表消费金额，可见高频客户 (右侧) 消费金额更高且购买更近期。右图 (频率 vs 消费金额) 显示频率和金额正相关，但少量极端客户 (右上角) 的消费金额远超其他客户，进一步验证了偏态分布。")
 
@@ -895,7 +895,7 @@ elif page == "💰 RFM 分析":
                      text='客户数量')
     fig_seg.update_layout(**CHART_LAYOUT, height=420, xaxis_tickangle=-25,
                           xaxis_title='', yaxis_title='客户数量')
-    st.plotly_chart(fig_seg, use_container_width=True)
+    st.plotly_chart(fig_seg, width='stretch')
 
     with st.expander("📋 查看分类依据 (评分规则)"):
         st.markdown("""
@@ -983,7 +983,7 @@ elif page == "🎯 K-Means 聚类":
             title="肘部法则 (Elbow Method)",
             xaxis_title='聚类数 K', yaxis_title='组内平方和 (WCSS)',
             height=400)
-        st.plotly_chart(fig_elbow, use_container_width=True)
+        st.plotly_chart(fig_elbow, width='stretch')
         st.caption("💡 **肘部法则**: WCSS (组内平方和) 随 K 增大而下降，曲线拐点处为最优 K。拐点之后继续增加 K 收益递减。")
     with col2:
         fig_sil = go.Figure()
@@ -1012,7 +1012,7 @@ elif page == "🎯 K-Means 聚类":
             title="轮廓系数分析 (Silhouette Score)",
             xaxis_title='聚类数 K', yaxis_title='轮廓系数',
             height=400)
-        st.plotly_chart(fig_sil, use_container_width=True)
+        st.plotly_chart(fig_sil, width='stretch')
         st.caption("💡 **轮廓系数**: 衡量簇内紧密度和簇间分离度，取值 -1~1。越高表示簇内样本越紧密、不同簇之间分离越清晰。⭐ 标记为 K≥3 范围内的推荐 K (K=2 系数虽最高，对应粗粒度的\"活跃/沉睡\"二分，但对精细化营销而言粒度不足)。")
 
     st.info(f"**K 值选择依据**: 轮廓系数在 K=2 处最高 ({elbow_result['best_silhouette']:.4f})，"
@@ -1062,7 +1062,7 @@ elif page == "🎯 K-Means 聚类":
                 '轮廓系数': f"{_v['silhouette']:.4f}" if _v.get('ok') else '计算失败',
                 '是否本项目首选': '⭐' if _m == 'composite' else '',
             })
-        st.dataframe(pd.DataFrame(_cmp_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(_cmp_rows), width='stretch', hide_index=True)
         st.caption("💡 上表数值随侧边栏 K 与 Winsorize 参数实时变化, 非固定参考值。")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -1150,7 +1150,7 @@ elif page == "🎯 K-Means 聚类":
         legend=dict(orientation='h', yanchor='top', y=-0.02, xanchor='center', x=0.5,
                     font=dict(size=15), itemsizing='constant'),
     )
-    st.plotly_chart(fig_3d, use_container_width=True)
+    st.plotly_chart(fig_3d, width='stretch')
     st.caption("💡 **可视化说明**: 为防止极端离群值 (如个别客户 Monetary 高达数十万) 把主云团压成一小团, 三个坐标轴均截断至 **99 分位**。因此图中显示的菱形群中心是\"截断后坐标空间\"的均值, 与下方\"聚类画像\"表中未截断的原始真实群均值可能存在少量差异, 属于合理的可视化取舍。如需精确数值, 请以下方画像表与热力图为准。")
 
     # 2D 特征空间散点图 (聚类实际发生的空间)
@@ -1215,7 +1215,7 @@ elif page == "🎯 K-Means 聚类":
     )
     fig_2d.update_layout(**CHART_LAYOUT, height=500,
                          title=f"聚类特征空间散点图 (支持框选交互){_dim_note}")
-    selection = st.plotly_chart(fig_2d, use_container_width=True, selection_mode="points",
+    selection = st.plotly_chart(fig_2d, width='stretch', selection_mode="points",
                                 on_select="rerun", key="scatter_2d")
 
     # 展示框选客户详情
@@ -1227,7 +1227,7 @@ elif page == "🎯 K-Means 聚类":
             with st.expander(f"📋 已选中 {len(sel_customers)} 位客户 — 点击展开详情", expanded=True):
                 display_sel = sel_customers[['Customer ID', 'Recency', 'Frequency', 'Monetary']].copy()
                 display_sel.columns = ['客户 ID', 'R (天)', 'F (次)', 'M ($)']
-                st.dataframe(display_sel, use_container_width=True, hide_index=True, height=300)
+                st.dataframe(display_sel, width='stretch', hide_index=True, height=300)
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -1243,7 +1243,7 @@ elif page == "🎯 K-Means 聚类":
                                            'Total_Revenue', 'Pct_Revenue']]
         display_profile.columns = ['客户分群', '客户数', '客户占比%', '平均R(天)',
                                    '平均F(次)', '平均M($)', '总收入', '收入占比%']
-        st.dataframe(display_profile, use_container_width=True, hide_index=True)
+        st.dataframe(display_profile, width='stretch', hide_index=True)
 
     with col_right:
         st.subheader("🕸️ 雷达图 (Radar Chart)")
@@ -1282,7 +1282,7 @@ elif page == "🎯 K-Means 聚类":
                 angularaxis=dict(gridcolor='#e5e7eb'),
             ),
         )
-        st.plotly_chart(fig_radar, use_container_width=True)
+        st.plotly_chart(fig_radar, width='stretch')
         st.caption("💡 **解读**: 雷达图面积越大代表该簇综合价值越高。重要价值客户簇在三个维度上均突出，覆盖面积最大。可直观对比各簇在 R/F/M 上的优劣势差异。")
         st.caption("*R-最近购买: 值越高 = 购买越近期 (已反转)")
 
@@ -1346,7 +1346,7 @@ elif page == "🎯 K-Means 聚类":
                          labels={'color': '得分'})
     fig_heat.update_layout(**CHART_LAYOUT, height=400,
                            xaxis_title='', yaxis_title='')
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width='stretch')
     st.caption("💡 **解读**: 热力图将聚类中心归一化到 0-1 区间，颜色越绿表示该维度得分越高。可快速识别每个簇的'强项'和'弱项'——例如重要价值客户在各维度上得分接近 1，而流失客户各维度均偏低。组合特征方法将 R/F/M 压缩为 2 个可解释维度——**时效性 (R_rank)** 与 **综合参与度 (RFM_composite = R+F+M 排名之和)**; 两维共享 R 项, 存在正相关而非严格正交, 属于用简单性换可解释性的自觉取舍 (详见「三种方法对比」展开)。")
 
 # ============================================================
@@ -1491,7 +1491,7 @@ elif page == "🔗 关联规则分析":
         )
         fig_scatter.update_layout(**CHART_LAYOUT, height=480,
                                   title="每条规则的支持度 vs 置信度 (气泡大小/颜色 = 提升度)")
-        st.plotly_chart(fig_scatter, use_container_width=True)
+        st.plotly_chart(fig_scatter, width='stretch')
         st.caption("💡 **解读**: 右上角的规则同时具有高支持度和高置信度，是最有价值的关联规则。"
                    "颜色越亮 (提升度越高) 表示关联越强——提升度 > 1 说明两商品的出现不是偶然的，而是正相关。")
 
@@ -1558,7 +1558,7 @@ elif page == "🔗 关联规则分析":
                 xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                 yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                 margin=dict(l=20, r=20, t=50, b=20))
-            st.plotly_chart(fig_net, use_container_width=True)
+            st.plotly_chart(fig_net, width='stretch')
             st.caption("💡 **解读**: 每个节点是一种商品，连线表示存在关联规则 (箭头方向: 前项→后项)。"
                        "节点越大说明该商品参与的关联规则越多 (是「枢纽」商品)；鼠标悬停连线可查看该规则的提升度与置信度。"
                        "可以识别出哪些商品经常被一起购买，用于捆绑销售或货架陈列优化。")
@@ -1582,7 +1582,7 @@ elif page == "🔗 关联规则分析":
         fig_cooc.update_layout(**CHART_LAYOUT, height=600,
                                xaxis_tickangle=-45,
                                xaxis_title='', yaxis_title='')
-        st.plotly_chart(fig_cooc, use_container_width=True)
+        st.plotly_chart(fig_cooc, width='stretch')
         st.caption("💡 **解读**: 颜色越深表示行商品出现时列商品也出现的概率越高。"
                    "对角线始终为 1 (商品自身共现)。非对角线的高值区域揭示了强共购模式，"
                    "可用于推荐系统和捆绑促销策略。")
@@ -1601,7 +1601,7 @@ elif page == "🔗 关联规则分析":
 
         n_display = st.slider("显示规则数量", min_value=10, max_value=min(100, len(display_rules)),
                               value=min(20, len(display_rules)), step=5)
-        st.dataframe(display_rules.head(n_display), use_container_width=True, hide_index=True)
+        st.dataframe(display_rules.head(n_display), width='stretch', hide_index=True)
 
         with st.expander("📖 指标含义说明"):
             st.markdown("""
