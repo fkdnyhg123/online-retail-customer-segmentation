@@ -375,6 +375,11 @@ def stat_cards_row(items):
     html += '</div>'
     st.markdown(html, unsafe_allow_html=True)
 
+def _dominant_bin(info):
+    """取分段统计里占比最高的档位, 返回 (档位标签, 占比%) — 供解读文案动态引用"""
+    _i = int(np.argmax(info['pcts']))
+    return info['labels'][_i], info['pcts'][_i]
+
 
 @st.cache_data(show_spinner=False)
 def cached_prepare_and_elbow(_rfm_df, method, winsorize_pct, k_start, k_end):
@@ -451,10 +456,10 @@ if page == "📈 数据概览":
     with col3:
         st.metric("覆盖国家", f"{raw_df['Country'].nunique()} 个")
 
-    # 三个初步观察
-    st.markdown("""
+    # 三个初步观察 (数字与下方质量饼图同源, 均取自 quality_report)
+    st.markdown(f"""
     **初步观察 (3 条)**:
-    1. **数据规模与缺失**: 共 525,461 条记录。Customer ID 缺失约 20.5% (107,927 条)，将严重影响客户级分析 (如 RFM)。Description 有 2,928 条缺失。
+    1. **数据规模与缺失**: 共 {quality_report['total_rows']:,} 条记录。Customer ID 缺失约 {quality_report['missing_customer_id_pct']}% ({quality_report['missing_customer_id']:,} 条)，将严重影响客户级分析 (如 RFM)。Description 有 {quality_report['missing_description']:,} 条缺失。
     2. **多重质量问题**: 存在取消订单 (Invoice 以 'C' 开头)、负数量、零/负价格、非商品编码 (POST 等)、精确重复行等多种问题，需仔细清洗。
     3. **地域集中**: 绝大多数订单来自英国，德国、法国等欧洲国家占比小，地域不平衡需在分析中考虑。
     """)
@@ -797,19 +802,29 @@ elif page == "💰 RFM 分析":
             fig_seg.update_layout(margin=dict(l=50, r=10, t=50, b=60))
             st.plotly_chart(fig_seg, use_container_width=True)
 
-    st.caption("💡 **解读**: R (最近购买间隔) 中位数 52 天，大多数客户在 2 个月内有购买行为。F (购买频率) 以 1-2 次为主，M (消费金额) 以 200-500 美元为主——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。这种偏态分布是后续需要做对数变换的原因。")
+    _r_med_txt = _fmt_val(rfm_seg['Recency'], rfm_seg['Recency']['p50'])
+    _f_dom, _f_dom_pct = _dominant_bin(rfm_seg['Frequency'])
+    _m_dom, _m_dom_pct = _dominant_bin(rfm_seg['Monetary'])
+    st.caption(f"💡 **解读**: R (最近购买间隔) 中位数 {_r_med_txt}，即超过半数客户在此间隔内有过购买。"
+               f"F (购买频率) 以 {_f_dom} 档为主 ({_f_dom_pct}%)，M (消费金额) 以 {_m_dom} 档为主 ({_m_dom_pct}%)"
+               f"——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。"
+               f"正因为这种强偏态，第 4 页聚类不直接对原始 R/F/M 建模，而改用百分位排名 (composite 组合特征)；"
+               f"对数变换的右偏压缩不够充分，实测效果反而最差，三种方法的对比见第 4 页「三种方法对比」展开。")
 
     # RFM 相关性矩阵
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+    corr = rfm_df[['Recency', 'Frequency', 'Monetary']].corr()
+    _fm_r = float(corr.loc['Frequency', 'Monetary'])
+    # 定性措辞随 r 值分档, 避免数字与形容词脱节
+    _fm_strength = '强' if _fm_r >= 0.7 else ('中等' if _fm_r >= 0.4 else '弱')
     col_corr1, col_corr2 = st.columns([1, 2])
     with col_corr1:
         st.subheader("🔗 RFM 相关性矩阵")
-        st.markdown("""
-        F (频率) 和 M (金额) 呈中等正相关 (r≈0.65)，说明买得多的客户也倾向于花得多。
+        st.markdown(f"""
+        F (频率) 和 M (金额) 呈{_fm_strength}正相关 (r≈{_fm_r:.2f})，说明买得多的客户也倾向于花得多。
         这一相关性是后续聚类中将 F/M 合并为 composite 特征的理论依据。
         """)
     with col_corr2:
-        corr = rfm_df[['Recency', 'Frequency', 'Monetary']].corr()
         corr_display = corr.copy()
         corr_display.index = ['R-最近购买', 'F-购买频率', 'M-消费金额']
         corr_display.columns = ['R-最近购买', 'F-购买频率', 'M-消费金额']
@@ -908,7 +923,19 @@ elif page == "💰 RFM 分析":
 | 待开发 | 其他 | — | — | 尚未明确归类的客户 |
         """)
 
-    st.caption("💡 **解读**: 使用分位数法将 R/F/M 各分为 1-5 档 (5 最高)，根据组合得分将客户归入不同价值分群。**沉睡客户**和**流失客户**占比最大，说明客户留存是核心问题。**冠军客户**虽然数量少，但贡献了绝大部分收入，应重点维护。")
+    _seg_rank = seg_counts.set_index('客户分群')['客户数量'].sort_values(ascending=False)
+    _seg_total = int(_seg_rank.sum())
+    _top_segs_txt = ' 和 '.join(
+        f"**{nm}** ({int(v):,} 人, {v / _seg_total * 100:.1f}%)"
+        for nm, v in _seg_rank.head(2).items())
+    _champ_mask = scored['分群'] == '冠军客户 (Champions)'
+    _champ_n = int(_champ_mask.sum())
+    _champ_ppl_pct = _champ_n / _seg_total * 100
+    _champ_rev_pct = scored.loc[_champ_mask, 'Monetary'].sum() / scored['Monetary'].sum() * 100
+    st.caption(f"💡 **解读**: 使用分位数法将 R/F/M 各分为 1-5 档 (5 最高)，根据组合得分将客户归入不同价值分群。"
+               f"人数最多的两个分群为 {_top_segs_txt}。"
+               f"**冠军客户** {_champ_n:,} 人 (占人数 {_champ_ppl_pct:.1f}%) 贡献了 {_champ_rev_pct:.1f}% 的收入——"
+               f"人数占比与收入占比之间的差距，正是分群差异化运营的价值所在。")
 
 # ============================================================
 # 页面 4: K-Means 聚类分析
@@ -1346,17 +1373,22 @@ elif page == "🔗 关联规则分析":
         help="只取购买频次最高的前 N 种商品参与分析，控制计算量。")
 
     # --- 缓存计算 ---
+    # 注意: `_df` / `_n_rows` 带下划线前缀 → Streamlit 不将其计入缓存哈希
+    # (40 万行 DataFrame 逐次哈希开销过大, 属刻意的性能取舍)。
+    # 因此缓存键实际为 (行数, min_support, min_confidence, top_items)。
+    # 当前单数据集 + 上层 Parquet 内容指纹已覆盖「换数据源」「改清洗逻辑」两条失效路径;
+    # 若将来支持多数据集切换, 需把 DATA_PATH 一并纳入缓存键, 否则行数相同的
+    # 两份数据会互相命中脏缓存。
     @st.cache_data(show_spinner="正在运行 FP-Growth 关联规则挖掘...")
-    def cached_association(_df_hash, min_support, min_confidence, top_items):
-        basket = prepare_basket_matrix(cleaned_df, top_n_items=top_items)
+    def cached_association(_df, min_support, min_confidence, top_items, _n_rows):
+        basket = prepare_basket_matrix(_df, top_n_items=top_items)
         result = run_fpgrowth(basket, min_support=min_support,
                               min_confidence=min_confidence, min_lift=1.0)
         cooc = compute_cooccurrence_matrix(basket, top_n=min(20, basket.shape[1]))
         return result, basket.shape, cooc
 
-    # Use parameters as cache key (df is always the same cleaned_df)
     assoc_result, basket_shape, cooc_matrix = cached_association(
-        len(cleaned_df), assoc_min_support, assoc_min_confidence, assoc_top_items)
+        cleaned_df, assoc_min_support, assoc_min_confidence, assoc_top_items, len(cleaned_df))
 
     rules_df = assoc_result['rules']
     itemsets_df = assoc_result['itemsets']

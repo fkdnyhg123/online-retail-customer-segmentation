@@ -229,10 +229,13 @@ def get_cluster_labels(profile: pd.DataFrame) -> dict:
         (lambda r, f, m: r >= avg_r and f <= avg_f and m <= avg_m, '流失客户'),
         (lambda r, f, m: r >= avg_r * 1.5 and f <= avg_f * 0.5, '沉睡客户'),
     ]
+    # fallback_pool 必须提供 >= K 上限 (app.py 侧边栏 K 最大 15) 个唯一名称,
+    # 且需覆盖 rules 里的全部标签 —— 否则 K 偏大时 used 耗尽, 标签会退化成 None
     fallback_pool = [
         '重要价值客户', '重要发展客户', '新客户', '沉睡客户',
         '流失客户', '需关注客户', '重要保持客户', '重要挽留客户',
-        '一般价值客户', '一般保持客户',
+        '一般价值客户', '一般保持客户', '一般挽留客户', '一般发展客户',
+        '低价值客户', '待唤醒客户', '边缘客户', '长尾客户',
     ]
 
     for cluster_id in sorted_clusters:
@@ -259,6 +262,13 @@ def get_cluster_labels(profile: pd.DataFrame) -> dict:
                 if candidate not in used:
                     assigned = candidate
                     break
+
+        # Last resort: pool 也耗尽时生成唯一序号名, 保证永不返回 None
+        if assigned is None:
+            _n = 1
+            while f'细分客群 {_n}' in used:
+                _n += 1
+            assigned = f'细分客群 {_n}'
 
         used.add(assigned)
         labels[cluster_id] = {

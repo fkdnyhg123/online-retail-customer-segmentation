@@ -50,7 +50,10 @@ def add_rfm_scores(rfm_df: pd.DataFrame, n_bins: int = 5) -> pd.DataFrame:
     df = rfm_df.copy()
 
     # R_score: lower recency = higher score (invert)
-    df['R_score'] = pd.qcut(df['Recency'], q=n_bins, labels=False, duplicates='drop')
+    # 与 F/M 一致先做 rank(method='first'): Recency 是整数天数、重复值密集,
+    # 直接 qcut 会让 bin 边界落在重复值上并被 duplicates='drop' 合并, 拿不到均匀五档,
+    # 而下游客户分群规则依赖 R_score >= 4 / <= 2 这类阈值, 档位不均会导致分群偏移
+    df['R_score'] = pd.qcut(df['Recency'].rank(method='first'), q=n_bins, labels=False, duplicates='drop')
     df['R_score'] = n_bins - df['R_score']  # Invert
 
     # F_score: higher frequency = higher score
