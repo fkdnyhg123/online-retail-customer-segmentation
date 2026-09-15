@@ -32,6 +32,55 @@ def _extract_words(description: str) -> set:
     return words
 
 
+# 高频词的中文注释: cn = 中文含义, type = 词类
+# 逐词核对过实际商品名 (取该词收入最高的几条) 后填写, 不是凭词义猜的, 例如:
+#   HOT / WATER / BOTTLE 三个词其实都来自同一个商品名 "HOT WATER BOTTLE" (热水袋),
+#   T-LIGHT 来自 "T-LIGHT HOLDER", UNION 来自 "UNION JACK" (英国国旗图案)
+WORD_CN = {
+    # 颜色类
+    'RED':      {'cn': '红色系列', 'type': '颜色'},
+    'WHITE':    {'cn': '白色系列', 'type': '颜色'},
+    'PINK':     {'cn': '粉色系列', 'type': '颜色'},
+    'BLUE':     {'cn': '蓝色系列', 'type': '颜色'},
+    'BLACK':    {'cn': '黑色系列', 'type': '颜色'},
+    # 图案类
+    'RETROSPOT': {'cn': '复古圆点图案', 'type': '图案'},
+    'SPOTTY':   {'cn': '圆点图案', 'type': '图案'},
+    'SPOT':     {'cn': '圆点图案 (RETRO SPOT 系列)', 'type': '图案'},
+    'UNION':    {'cn': '英国国旗图案 (Union Jack)', 'type': '图案'},
+    # 风格类
+    'VINTAGE':  {'cn': '复古风格', 'type': '风格'},
+    'RETRO':    {'cn': '复古风格', 'type': '风格'},
+    # 品类类
+    'BAG':      {'cn': '袋类 (购物袋 / 手提袋)', 'type': '品类'},
+    'HOLDER':   {'cn': '托架类 (烛台 / 卡片架)', 'type': '品类'},
+    'CAKE':     {'cn': '蛋糕装饰 (纸杯 / 托盘)', 'type': '品类'},
+    'BOX':      {'cn': '盒类 (首饰盒 / 收纳盒)', 'type': '品类'},
+    'T-LIGHT':  {'cn': '茶蜡托 / 小蜡烛', 'type': '品类'},
+    'SIGN':     {'cn': '标牌 / 挂牌', 'type': '品类'},
+    'TEA':      {'cn': '茶具 / 茶主题', 'type': '品类'},
+    'HOT':      {'cn': '热水袋 (来自 HOT WATER BOTTLE)', 'type': '品类'},
+    'BOTTLE':   {'cn': '热水袋 / 瓶类', 'type': '品类'},
+    'WATER':    {'cn': '热水袋 (来自 HOT WATER BOTTLE)', 'type': '品类'},
+    'LUNCH':    {'cn': '午餐袋系列', 'type': '品类'},
+    # 材质类
+    'METAL':    {'cn': '金属材质 (多为金属标牌)', 'type': '材质'},
+    'PAPER':    {'cn': '纸质品 (拉花 / 纸链)', 'type': '材质'},
+    'GLASS':    {'cn': '玻璃材质', 'type': '材质'},
+    # 形态 / 规格 / 主题
+    'HEART':    {'cn': '心形造型', 'type': '形态'},
+    'HANGING':  {'cn': '悬挂式', 'type': '形态'},
+    'JUMBO':    {'cn': '超大规格', 'type': '规格'},
+    'SMALL':    {'cn': '小规格', 'type': '规格'},
+    'CHRISTMAS': {'cn': '圣诞主题', 'type': '主题'},
+}
+
+
+def _word_cn(word: str) -> dict:
+    """取词的中文注释, 未登记的词返回占位, 保证页面不会出现 None。"""
+    return WORD_CN.get(word, {'cn': '—', 'type': '其他'})
+
+
 def description_word_stats(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
     """
     按商品描述里的高频词统计品类表现 (数据驱动, 不依赖人工品类词表)。
@@ -47,7 +96,7 @@ def description_word_stats(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
         top_n: 返回收入最高的前 N 个品类词
 
     Returns:
-        DataFrame: 关键词, 商品数, 收入, 收入占比%, 销量, 平均单价
+        DataFrame: 关键词, 中文含义, 词类, 显示名, 商品数, 收入, 收入占比%, 销量, 平均单价
     """
     items = df.groupby(['StockCode', 'Description']).agg(
         收入=('Revenue', 'sum'),
@@ -70,7 +119,16 @@ def description_word_stats(df: pd.DataFrame, top_n: int = 15) -> pd.DataFrame:
     out['收入占比%'] = (out['收入'] / total_revenue * 100).round(2)
     out['平均单价'] = (out['收入'] / out['销量']).round(2)
     out['收入'] = out['收入'].round(0)
-    return out.sort_values('收入', ascending=False).head(top_n).reset_index(drop=True)
+
+    # 中文注释与词类: 屏幕上只有英文品类词对观众不友好, 这里补上中文含义;
+    # 词类同时支撑"这些高频词以颜色/图案/风格类为主"这个结论 (见第 6 页解读)
+    out['中文含义'] = out['关键词'].map(lambda w: _word_cn(w)['cn'])
+    out['词类'] = out['关键词'].map(lambda w: _word_cn(w)['type'])
+    out['显示名'] = out['关键词'] + ' · ' + out['中文含义']
+
+    out = out.sort_values('收入', ascending=False).head(top_n).reset_index(drop=True)
+    return out[['关键词', '中文含义', '词类', '显示名', '商品数', '收入',
+                '收入占比%', '销量', '平均单价']]
 
 
 def country_summary(df: pd.DataFrame) -> pd.DataFrame:

@@ -23,7 +23,8 @@ from utils.association import (prepare_basket_matrix, run_fpgrowth,
                                compute_cooccurrence_matrix, build_network_graph,
                                threshold_sweep, build_marketing_actions)
 from utils.product_country import (description_word_stats, country_summary,
-                                   uk_vs_overseas_profile, country_monthly_revenue)
+                                   uk_vs_overseas_profile, country_monthly_revenue,
+                                   WORD_CN)
 
 # ============================================================
 # 页面配置
@@ -1953,9 +1954,10 @@ elif page == "📦 商品与国家调查":
 
     _w1, _w2 = st.columns(2)
     with _w1:
-        fig_word = px.bar(_words.sort_values('收入'), x='收入', y='关键词', orientation='h',
+        fig_word = px.bar(_words.sort_values('收入'), x='收入', y='显示名', orientation='h',
                           color='平均单价', color_continuous_scale='Viridis',
-                          hover_data={'商品数': True, '销量': True, '平均单价': ':.2f'})
+                          hover_data={'关键词': True, '商品数': True, '销量': True,
+                                      '平均单价': ':.2f'})
         fig_word.update_layout(**CHART_LAYOUT, height=430,
                                title='各品类词的收入贡献 (颜色 = 平均单价)',
                                yaxis={'categoryorder': 'total ascending'},
@@ -1964,24 +1966,46 @@ elif page == "📦 商品与国家调查":
         st.plotly_chart(fig_word, width='stretch')
     with _w2:
         fig_ps = px.scatter(_words, x='销量', y='平均单价', size='收入', color='收入',
-                            color_continuous_scale='Plasma', hover_name='关键词', log_x=True,
+                            color_continuous_scale='Plasma', hover_name='显示名', log_x=True,
                             labels={'销量': '总销量 (件)', '平均单价': '平均单价 ($)'})
         fig_ps.update_layout(**CHART_LAYOUT, height=430,
                              title='销量 vs 平均单价 (气泡大小 = 收入)')
         st.plotly_chart(fig_ps, width='stretch')
 
-    _word_table = _words[['关键词', '商品数', '收入', '收入占比%', '销量', '平均单价']].copy()
-    _word_table.columns = ['品类词', '商品数', '收入 ($)', '收入占比%', '销量 (件)', '平均单价 ($)']
+    _word_table = _words[['关键词', '中文含义', '词类', '商品数', '收入',
+                          '收入占比%', '销量', '平均单价']].copy()
+    _word_table.columns = ['品类词', '含义', '词类', '商品数', '收入 ($)',
+                           '收入占比%', '销量 (件)', '平均单价 ($)']
     st.dataframe(_word_table, width='stretch', hide_index=True)
+
+    # 页面上只显示前 N 个词, 这里把全部注释列出来, 观众可随时查任意词的含义
+    with st.expander("📖 品类词对照表 (全部注释, 点击展开)"):
+        _dict_df = pd.DataFrame([{'品类词': _w, '含义': _v['cn'], '词类': _v['type']}
+                                 for _w, _v in WORD_CN.items()])
+        _dict_df = _dict_df.sort_values(['词类', '品类词']).reset_index(drop=True)
+        st.dataframe(_dict_df, width='stretch', hide_index=True, height=320)
+        st.caption("**词类说明**: 颜色 / 图案 / 风格 是**系列或款式词**（描述商品长什么样），"
+                   "品类 / 材质 / 形态 是**商品属性词**（描述商品是什么），规格 / 主题 是**规格与节庆词**。"
+                   "这些注释是逐词核对真实商品名后填写的，未登记的词标为「其他」。")
 
     # 动态取值, 避免把结论写死
     _top_word = _words.iloc[0]
     _hi_price_word = _words.sort_values('平均单价', ascending=False).iloc[0]
-    st.caption(f"💡 **解读**: 收入贡献最高的是 **{_top_word['关键词']}** (覆盖 {int(_top_word['商品数'])} 种商品, "
-               f"收入 ${_top_word['收入']:,.0f}, 占全站 {_top_word['收入占比%']}%), 可视为店铺的基本盘品类; "
-               f"平均单价最高的是 **{_hi_price_word['关键词']}** (${_hi_price_word['平均单价']:.2f}/件), 属高客单价品类。"
-               f"右图把品类分成两类 — 右下角是**走量低价**的引流型品类, 左上角是**高单价低销量**的利润型品类; "
-               f"前者适合做曝光与凑单, 后者更适合重点推荐与会员专享。")
+    _type_txt = '、'.join(f"**{_t}** {_n} 个"
+                          for _t, _n in _words['词类'].value_counts().items())
+    st.caption(f"💡 **解读**: 收入贡献最高的是 **{_top_word['关键词']}**（{_top_word['中文含义']}）——覆盖 "
+               f"{int(_top_word['商品数'])} 种商品、收入 ${_top_word['收入']:,.0f}、占全站 {_top_word['收入占比%']}%，"
+               f"可视为店铺的基本盘；平均单价最高的是 **{_hi_price_word['关键词']}**（{_hi_price_word['中文含义']}），"
+               f"约 ${_hi_price_word['平均单价']:.2f}/件。"
+               f"从词类构成看，这 {len(_words)} 个高频词里 {_type_txt}；更值得注意的是"
+               f"**颜色词在前五名里就占了 3 席**（RED / WHITE / PINK），说明顾客高度按「同一个商品的不同花色」选购 —— "
+               f"这与第 5 页关联规则里「同系列不同色商品互相强关联」的发现完全一致。"
+               f"右图（对数 X 轴）则把品类分出两类：右下角是**走量**型（覆盖商品多、总销量大），"
+               f"相对左上角是**量小价略高**型 —— 前者适合做曝光与凑单，后者更适合重点推荐与会员专享。")
+
+    st.caption("⚠️ **口径提醒**: `HOT` / `WATER` / `BOTTLE` 三个词其实来自同一个商品名 "
+               "`HOT WATER BOTTLE`（热水袋），`RETRO` / `SPOT` / `RETROSPOT` 也高度重叠 —— "
+               "同一件商品会命中多个词，所以表中各项**不能相加**，这也是前面强调口径的原因。")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
