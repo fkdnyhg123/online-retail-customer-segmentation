@@ -11,6 +11,9 @@ Three methods available:
     Legacy log-transform. K=5 silhouette ≈ 0.32.
 
 All methods use StandardScaler + K-Means with n_init=50, max_iter=500.
+
+可选的 extra_features (如 ['AOV', 'N_products']) 会以百分位排名追加到上述维度之后,
+只在 R/F/M 之外增加输入维度, 不改动三种方法原有的 R/F/M 处理路径。
 """
 import pandas as pd
 import numpy as np
@@ -20,7 +23,8 @@ from sklearn.metrics import silhouette_score, silhouette_samples
 
 
 def prepare_features(rfm_df: pd.DataFrame, method: str = 'composite',
-                     winsorize_pct: float = 0.995) -> tuple:
+                     winsorize_pct: float = 0.995,
+                     extra_features: list = None) -> tuple:
     """
     Prepare features for K-Means clustering.
 
@@ -28,12 +32,28 @@ def prepare_features(rfm_df: pd.DataFrame, method: str = 'composite',
         rfm_df: DataFrame with Recency, Frequency, Monetary columns
         method: 'composite' (recommended 2D), 'rank' (3D), or 'log' (3D legacy)
         winsorize_pct: upper clip percentile for Winsorizing (default 0.995 = top 0.5%)
+        extra_features: 额外纳入聚类的非 RFM 客户特征列名 (如 ['AOV', 'N_products']),
+                        须已存在于 rfm_df。它们只在 R/F/M 之外**增加维度**, 不改动
+                        三种方法原有的 R/F/M 处理路径; 统一走百分位排名 —— rank 只看
+                        次序、天然抗离群 (AOV 偏度 11.6 也无需再截断), 且无量纲,
+                        不会因量级差异压过其他维度
 
     Returns:
         (scaled_features, feature_names, scaler, transformed_df)
         transformed_df contains the intermediate feature values for debugging
     """
-    df = rfm_df[['Recency', 'Frequency', 'Monetary']].copy()
+    extra_features = list(extra_features or [])
+    _missing = [c for c in extra_features if c not in rfm_df.columns]
+    if _missing:
+        raise ValueError(f"extra_features 不存在于 rfm_df: {_missing}")
+
+    df = rfm_df[['Recency', 'Frequency', 'Monetary'] + extra_features].copy()
+
+    # 额外特征统一转百分位排名, 三种方法共用同一套列名 {原列名}_rank
+    extra_cols = []
+    for col in extra_features:
+        df[f'{col}_rank'] = df[col].rank(pct=True)
+        extra_cols.append(f'{col}_rank')
 
     if method == 'composite':
         # === Composite method (2D): R_rank + RFM_composite ===
@@ -50,8 +70,9 @@ def prepare_features(rfm_df: pd.DataFrame, method: str = 'composite',
 
         # 2D composite: timeliness + overall engagement
         rfm_composite = r_rank + f_rank + m_rank
-        features = np.column_stack([r_rank.values, rfm_composite.values])
-        feature_names = ['R_rank', 'RFM_composite']
+        features = np.column_stack([r_rank.values, rfm_composite.values]
+                                   + [df[c].values for c in extra_cols])
+        feature_names = ['R_rank', 'RFM_composite'] + extra_cols
 
         transformed = pd.DataFrame(features, columns=feature_names)
 
@@ -67,19 +88,17 @@ def prepare_features(rfm_df: pd.DataFrame, method: str = 'composite',
         df['F_rank'] = df['Frequency'].rank(pct=True)
         df['M_rank'] = df['Monetary'].rank(pct=True)
 
-        features = df[['R_rank', 'F_rank', 'M_rank']].values
-        feature_names = ['Recency', 'Frequency', 'Monetary']
+        features = df[['R_rank', 'F_rank', 'M_rank'] + extra_cols].values
+        feature_names = ['Recency', 'Frequency', 'Monetary'] + extra_cols
 
-        transformed = df[['R_rank', 'F_rank', 'M_rank']].copy()
+        transformed = df[['R_rank', 'F_rank', 'M_rank'] + extra_cols].copy()
         transformed.columns = feature_names
 
     elif method == 'log':
         # === Log method (3D): log1p transform ===
-        feature_names = ['Recency', 'Frequency', 'Monetary']
-        features = df.values.copy().astype(float)
-        features[:, 0] = np.log1p(features[:, 0])
-        features[:, 1] = np.log1p(features[:, 1])
-        features[:, 2] = np.log1p(features[:, 2])
+        feature_names = ['Recency', 'Frequency', 'Monetary'] + extra_cols
+        base = np.log1p(df[['Recency', 'Frequency', 'Monetary']].values.astype(float))
+        features = np.column_stack([base] + [df[c].values for c in extra_cols])
         transformed = pd.DataFrame(features, columns=feature_names)
 
     else:
@@ -133,7 +152,7 @@ def find_optimal_k(features, k_range: range = range(2, 11), random_state: int = 
 
 def run_kmeans(rfm_df: pd.DataFrame, n_clusters: int = 5,
                method: str = 'composite', winsorize_pct: float = 0.995,
-               random_state: int = 42) -> dict:
+               random_state: int = 42, extra_features: list = None) -> dict:
     """
     Run K-Means clustering on RFM data.
 
@@ -150,7 +169,8 @@ def run_kmeans(rfm_df: pd.DataFrame, n_clusters: int = 5,
         - 'method': the method used ('rank' or 'log')
     """
     scaled, feature_names, scaler, transformed = prepare_features(
-        rfm_df, method=method, winsorize_pct=winsorize_pct)
+        rfm_df, method=method, winsorize_pct=winsorize_pct,
+        extra_features=extra_features)
 
     # === Step 4: K-Means with aggressive tuning ===
     km = KMeans(n_clusters=n_clusters, random_state=random_state,
@@ -174,13 +194,18 @@ def run_kmeans(rfm_df: pd.DataFrame, n_clusters: int = 5,
     centers_df.index.name = 'Cluster'
 
     # Cluster profile: mean RFM per cluster (in original scale)
-    profile = clustered.groupby('Cluster').agg(
+    profile_aggs = dict(
         Customers=('Customer ID', 'count'),
         Avg_Recency=('Recency', 'mean'),
         Avg_Frequency=('Frequency', 'mean'),
         Avg_Monetary=('Monetary', 'mean'),
         Total_Revenue=('Monetary', 'sum'),
-    ).round(2)
+    )
+    # 扩展特征一并聚合进画像 (如 Avg_AOV / Avg_N_products), 让新维度落到业务解释里
+    for _col in (extra_features or []):
+        if _col in clustered.columns:
+            profile_aggs[f'Avg_{_col}'] = (_col, 'mean')
+    profile = clustered.groupby('Cluster').agg(**profile_aggs).round(2)
     profile['Pct_Customers'] = (profile['Customers'] / len(clustered) * 100).round(1)
     profile['Pct_Revenue'] = (profile['Total_Revenue'] / clustered['Monetary'].sum() * 100).round(1)
 

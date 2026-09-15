@@ -217,3 +217,116 @@ def build_network_graph(rules_df: pd.DataFrame, top_n: int = 30) -> dict:
     edges = [{'source': u, 'target': v, **d} for u, v, d in G.edges(data=True)]
 
     return {'nodes': nodes, 'edges': edges, 'pos': pos}
+
+
+def threshold_sweep(basket_matrix: pd.DataFrame,
+                    supports: list, confidences: list,
+                    min_lift: float = 1.0) -> tuple:
+    """
+    扫描「支持度 × 置信度」网格, 为"阈值范围该定在哪"提供数据依据。
+
+    优化依据: 频繁项集对 support 单调 —— 低阈值下的项集集合必然包含高阈值下的,
+    因此只需在最低支持度上跑一次 fpgrowth, 再按 support 过滤 + 逐置信度生成规则,
+    避免在几十个阈值组合上重复挖掘。
+
+    Parameters:
+        basket_matrix: 购物篮矩阵
+        supports: 待扫描的支持度列表 (建议含滑块的两端)
+        confidences: 待扫描的置信度列表
+        min_lift: 提升度下限 (默认 1.0, 即只保留正相关规则)
+
+    Returns:
+        (DataFrame, dict)
+        - DataFrame: 每行一个组合 —— 支持度, 置信度, 频繁项集数, 规则数, 最高提升度, 最高置信度
+        - dict: 支持度上界的两个依据
+            'max_item_support': 最高频单品自身的支持度
+            'max_pair_support': 最高频**商品对**的支持度 —— 规则的天然上界, 因为一条规则
+                                至少需要两种商品共现; 阈值超过它必然一条规则都挖不出来
+          (两者都由 min(supports) 这一次挖掘结果统计得出, 故 supports 的最小值需足够低)
+    """
+    cols = ['支持度', '置信度', '频繁项集数', '规则数', '最高提升度', '最高置信度']
+    info = {'max_item_support': 0.0, 'max_pair_support': 0.0}
+    if basket_matrix.empty:
+        return pd.DataFrame(columns=cols), info
+
+    base = fpgrowth(basket_matrix, min_support=min(supports), use_colnames=True)
+
+    info['max_item_support'] = float(basket_matrix.mean().max())
+    if not base.empty:
+        _n_items = base['itemsets'].apply(len)
+        _pairs = base[_n_items >= 2]
+        if not _pairs.empty:
+            info['max_pair_support'] = float(_pairs['support'].max())
+
+    rows = []
+    for s in supports:
+        sub = base[base['support'] >= s]
+        for c in confidences:
+            n_rules, max_lift, max_conf = 0, np.nan, np.nan
+            if not sub.empty:
+                try:
+                    r = association_rules(sub, metric='confidence',
+                                          min_threshold=c, num_itemsets=len(sub))
+                except ValueError:
+                    r = pd.DataFrame()
+                if not r.empty:
+                    r = r[r['lift'] >= min_lift]
+                if not r.empty:
+                    n_rules = int(len(r))
+                    max_lift = round(float(r['lift'].max()), 2)
+                    max_conf = round(float(r['confidence'].max()), 3)
+            rows.append({
+                '支持度': s, '置信度': c, '频繁项集数': int(len(sub)),
+                '规则数': n_rules, '最高提升度': max_lift, '最高置信度': max_conf,
+            })
+    return pd.DataFrame(rows, columns=cols), info
+
+
+def build_marketing_actions(rules_df: pd.DataFrame, top_n: int = 8) -> pd.DataFrame:
+    """
+    把关联规则翻译成可执行的营销动作, 按提升度分档决定力度与形式。
+
+    分档依据 lift 而非 confidence: 置信度会被后项自身的高频次抬高 (热门商品天然
+    容易"被一起买"), lift 才是"比随机共现强多少倍"的强度指标。
+      lift >= 10  -> 强: 直接组合成套装/配套商品主推
+      5 <= lift < 10 -> 中: 货架相邻陈列 / 详情页同页推荐
+      lift < 5  -> 弱: 凑单推荐位 / 满额赠品候选
+
+    Parameters:
+        rules_df: 规则表 (已按 lift 降序)
+        top_n: 取前 N 条规则生成方案
+
+    Returns:
+        DataFrame: 前项, 后项, 支持度, 置信度, 提升度, 关联力度, 建议动作
+    """
+    if rules_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    seen_pairs = set()
+    for _, r in rules_df.iterrows():
+        # A→B 与 B→A 是同一个商品组合 (实测两向 lift 相同), 做方案时只保留一条, 否则
+        # 同一个套装会被列出两次, 让方案表虚增一倍
+        _pair = frozenset(r['antecedents']) | frozenset(r['consequents'])
+        if _pair in seen_pairs:
+            continue
+        seen_pairs.add(_pair)
+
+        if r['lift'] >= 10:
+            strength, action = '强', '组合成套装/配套商品主推'
+        elif r['lift'] >= 5:
+            strength, action = '中', '货架相邻陈列 / 详情页同页推荐'
+        else:
+            strength, action = '弱', '凑单推荐位 / 满额赠品候选'
+        rows.append({
+            '前项': ' + '.join(sorted(r['antecedents'])),
+            '后项': ' + '.join(sorted(r['consequents'])),
+            '支持度': round(float(r['support']), 4),
+            '置信度': round(float(r['confidence']), 3),
+            '提升度': round(float(r['lift']), 2),
+            '关联力度': strength,
+            '建议动作': action,
+        })
+        if len(rows) >= top_n:
+            break
+    return pd.DataFrame(rows)

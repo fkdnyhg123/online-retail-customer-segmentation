@@ -16,10 +16,14 @@ import hashlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils.data_cleaner import load_raw_data, clean_data, get_data_quality_report, get_cleaning_summary
-from utils.rfm import calculate_rfm, add_rfm_scores, get_rfm_stats
+from utils.rfm import (calculate_rfm, add_rfm_scores, get_rfm_stats,
+                       calculate_extended_features, EXTENDED_FEATURE_INFO)
 from utils.clustering import prepare_features, find_optimal_k, run_kmeans, get_cluster_labels
 from utils.association import (prepare_basket_matrix, run_fpgrowth,
-                               compute_cooccurrence_matrix, build_network_graph)
+                               compute_cooccurrence_matrix, build_network_graph,
+                               threshold_sweep, build_marketing_actions)
+from utils.product_country import (description_word_stats, country_summary,
+                                   uk_vs_overseas_profile, country_monthly_revenue)
 
 # ============================================================
 # 页面配置
@@ -250,6 +254,9 @@ def load_and_clean(filepath):
     cleaned_quality = get_data_quality_report(cleaned_df)
     cleaning_summary = get_cleaning_summary(raw_df, cleaned_df)
     rfm_df = calculate_rfm(cleaned_df)
+    # 扩展特征 (AOV / 品类广度) 并入 rfm_df: 聚类页按列名取用, 客户特征分析页直接画分布
+    rfm_df = rfm_df.merge(calculate_extended_features(cleaned_df),
+                          on='Customer ID', how='left')
     rfm_scored = add_rfm_scores(rfm_df)
     rfm_stats = get_rfm_stats(rfm_df)
     return raw_df, cleaned_df, quality_report, cleaned_quality, cleaning_summary, rfm_df, rfm_scored, rfm_stats
@@ -384,33 +391,36 @@ def _dominant_bin(info):
 
 
 @st.cache_data(show_spinner=False)
-def cached_prepare_and_elbow(_rfm_df, method, winsorize_pct, k_start, k_end):
+def cached_prepare_and_elbow(_rfm_df, method, winsorize_pct, k_start, k_end, extra_features):
     """特征工程 + 最优 K 搜索 (缓存, 避免每次交互重跑)"""
     scaled, feature_names, scaler, transformed_df = prepare_features(
-        _rfm_df, method=method, winsorize_pct=winsorize_pct)
+        _rfm_df, method=method, winsorize_pct=winsorize_pct,
+        extra_features=extra_features)
     elbow = find_optimal_k(scaled, k_range=range(k_start, k_end + 1))
     return scaled, feature_names, scaler, transformed_df, elbow
 
 
 @st.cache_data(show_spinner=False)
-def cached_run_kmeans(_rfm_df, n_clusters, method, winsorize_pct):
+def cached_run_kmeans(_rfm_df, n_clusters, method, winsorize_pct, extra_features):
     """K-Means 聚类 (缓存, 避免每次交互重跑)"""
     return run_kmeans(_rfm_df, n_clusters=n_clusters, method=method,
-                      winsorize_pct=winsorize_pct)
+                      winsorize_pct=winsorize_pct, extra_features=extra_features)
 
 
 @st.cache_data(show_spinner="正在对比三种特征工程方法...")
-def cached_compare_methods(_rfm_df, compare_k, winsorize_pct):
-    """在同一 K 值下动态计算三种方法的轮廓系数, 供对比表格使用 (避免硬编码)"""
+def cached_compare_methods(_rfm_df, compare_k, winsorize_pct, extra_features):
+    """在同一 K 与特征集下动态计算三种方法的轮廓系数, 供对比表格使用 (避免硬编码)"""
     out = {}
     for m in ['composite', 'rank', 'log']:
         try:
             r = run_kmeans(_rfm_df, n_clusters=compare_k, method=m,
-                           winsorize_pct=winsorize_pct)
+                           winsorize_pct=winsorize_pct,
+                           extra_features=extra_features)
             out[m] = {
                 'silhouette': round(float(r['silhouette_score']), 4),
-                'dims': len(prepare_features(_rfm_df, method=m,
-                                             winsorize_pct=winsorize_pct)[1]),
+                'dims': len(prepare_features(
+                    _rfm_df, method=m, winsorize_pct=winsorize_pct,
+                    extra_features=extra_features)[1]),
                 'ok': True,
             }
         except Exception as e:
@@ -418,13 +428,90 @@ def cached_compare_methods(_rfm_df, compare_k, winsorize_pct):
                       'err': str(e)}
     return out
 
+
+@st.cache_data(show_spinner=False)
+def compute_extended_segments(_rfm_df):
+    """计算扩展特征 (AOV / 品类广度) 的分段统计 (缓存)"""
+    configs = {
+        'AOV': {
+            'bins': [0, 100, 200, 300, 500, 1000, float('inf')],
+            'labels': ['$0-100', '$100-200', '$200-300', '$300-500', '$500-1K', '$1K+'],
+            'xaxis_title': '平均客单价 ($)', 'title': 'AOV - 平均客单价分布',
+            'color': COLORS['info'], 'numfmt': '{:.0f}', 'unit': '美元',
+        },
+        'N_products': {
+            'bins': [0, 10, 25, 50, 100, 200, float('inf')],
+            'labels': ['1-10种', '11-25种', '26-50种', '51-100种', '101-200种', '200+种'],
+            'xaxis_title': '购买商品种类数', 'title': '品类广度 - 商品种类数分布',
+            'color': COLORS['secondary'], 'numfmt': '{:.0f}', 'unit': '种',
+        },
+    }
+    results = {}
+    for col, cfg in configs.items():
+        s = _rfm_df[col]
+        counts = pd.cut(s, bins=cfg['bins'], labels=cfg['labels'],
+                        right=True).value_counts().sort_index()
+        total = len(s)
+        quantiles = s.quantile([0.25, 0.5, 0.75, 0.90])
+        results[col] = {
+            'labels': cfg['labels'], 'counts': counts.tolist(),
+            'pcts': (counts / total * 100).round(1).tolist(),
+            'p25': float(quantiles[0.25]), 'p50': float(quantiles[0.5]),
+            'p75': float(quantiles[0.75]), 'p90': float(quantiles[0.90]),
+            'mean': float(s.mean()), 'max': float(s.max()),
+            'xaxis_title': cfg['xaxis_title'], 'title': cfg['title'],
+            'color': cfg['color'], 'numfmt': cfg['numfmt'], 'unit': cfg['unit'],
+        }
+    return results
+
+
+# 阈值敏感性扫描的网格: 覆盖滑块量程的关键刻度, 用于反推"阈值范围该定在哪"
+SUPPORT_SWEEP = [0.005, 0.01, 0.015, 0.02, 0.025, 0.03, 0.04, 0.05]
+CONFIDENCE_SWEEP = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.9]
+
+
+@st.cache_data(show_spinner="正在扫描支持度 / 置信度网格...")
+def cached_threshold_sweep(_df, top_items, _n_rows):
+    """阈值网格扫描 (缓存键为 top_items; 与 cleaned_df 的绑定由上层 Parquet 指纹保证)
+
+    返回 (扫描表, 支持度上界依据)。上界依据里最关键的是最高频**商品对**的支持度:
+    一条规则至少需要两种商品共现, 所以它是关联规则支持度的天然上界。
+    """
+    basket = prepare_basket_matrix(_df, top_n_items=top_items)
+    return threshold_sweep(basket, SUPPORT_SWEEP, CONFIDENCE_SWEEP, min_lift=1.0)
+
+
+@st.cache_data(show_spinner=False)
+def cached_description_words(_df, top_n):
+    """按商品描述高频词统计品类表现 (缓存)"""
+    return description_word_stats(_df, top_n=top_n)
+
+
+@st.cache_data(show_spinner=False)
+def cached_country_summary(_df):
+    """按国家汇总业务表现 (缓存)"""
+    return country_summary(_df)
+
+
+@st.cache_data(show_spinner=False)
+def cached_uk_overseas(_df, _rfm_df):
+    """本土 vs 海外客户画像对比 (缓存)"""
+    return uk_vs_overseas_profile(_df, _rfm_df)
+
+
+@st.cache_data(show_spinner=False)
+def cached_country_monthly(_df, top_n):
+    """国家月度收入透视表 (缓存)"""
+    return country_monthly_revenue(_df, top_n=top_n)
+
 # ============================================================
 # 侧边栏导航
 # ============================================================
 st.sidebar.markdown("## 📊 导航面板")
 page = st.sidebar.radio(
     "页面选择",
-    ["📈 数据概览", "🔍 数据探索", "💰 RFM 分析", "🎯 K-Means 聚类", "🔗 关联规则分析"],
+    ["📈 数据概览", "🔍 数据探索", "👥 客户特征分析", "🎯 K-Means 聚类",
+     "🔗 关联规则分析", "📦 商品与国家调查"],
     label_visibility="collapsed"
 )
 
@@ -760,9 +847,10 @@ elif page == "🔍 数据探索":
 # ============================================================
 # 页面 3: RFM 分析
 # ============================================================
-elif page == "💰 RFM 分析":
-    st.title("💰 RFM 客户价值分析")
-    st.markdown("基于 Recency (最近购买)、Frequency (购买频率)、Monetary (消费金额) 的客户价值模型")
+elif page == "👥 客户特征分析":
+    st.title("👥 客户特征分析")
+    st.markdown("在经典 R/F/M 模型之上引入两个非 RFM 的客户级特征 —— **平均客单价 (AOV)** 与 "
+                "**品类广度**，共 5 个维度刻画客户价值与消费结构；这 5 个维度也是第 4 页聚类模型的输入。")
 
     # R/F/M 核心指标 (紧凑表格, R/F/M 行标签清晰)
     rfm_seg = compute_rfm_segments(rfm_df)
@@ -815,23 +903,77 @@ elif page == "💰 RFM 分析":
                f"正因为这种强偏态，第 4 页聚类不直接对原始 R/F/M 建模，而改用百分位排名 (composite 组合特征)；"
                f"对数变换的右偏压缩不够充分，实测效果反而最差，三种方法的对比见第 4 页「三种方法对比」展开。")
 
-    # RFM 相关性矩阵
+    # ---- 扩展客户特征 (非 RFM) ----
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-    corr = rfm_df[['Recency', 'Frequency', 'Monetary']].corr()
+    st.subheader("🧩 扩展客户特征 (非 RFM)")
+    st.caption("在 R/F/M 之外增加两个客户级特征, 它们同时是第 4 页聚类模型的第 4、5 个输入维度。")
+
+    ext_seg = compute_extended_segments(rfm_df)
+    _ext_cols = st.columns(2)
+    for _mc, _dim in zip(_ext_cols, ['AOV', 'N_products']):
+        with _mc:
+            _info = ext_seg[_dim]
+            fig_ext = px.bar(
+                x=_info['labels'], y=_info['counts'],
+                color=_info['counts'],
+                color_continuous_scale=[_info['color'] + '66', _info['color']],
+                labels={'x': _info['xaxis_title'], 'y': '客户数'},
+            )
+            fig_ext.update_traces(
+                text=[f"{p}%" for p in _info['pcts']],
+                textposition='outside',
+                textfont=dict(size=12, color='#333'),
+                hovertemplate=f'{_info["xaxis_title"]}'+'=%{x}<br>客户数=%{y:,.0f}<br>占比=%{text}<extra></extra>'
+            )
+            fig_ext.update_layout(**CHART_LAYOUT, height=380, title=_info['title'],
+                                  showlegend=False, coloraxis_showscale=False,
+                                  xaxis=dict(tickfont=dict(size=11)),
+                                  yaxis=dict(title='客户数'))
+            fig_ext.update_layout(margin=dict(l=50, r=10, t=50, b=60))
+            st.plotly_chart(fig_ext, width='stretch')
+
+    _ext_rows = []
+    for _key in ['AOV', 'N_products']:
+        _info = ext_seg[_key]
+        _meta = EXTENDED_FEATURE_INFO[_key]
+        _ext_rows.append(
+            f"| **{_meta['name']}** ({_meta['en']}) | {_meta['formula']} | {_meta['desc']} | "
+            f"{_fmt_val(_info, _info['p50'])} | {_fmt_val(_info, _info['p75'])} |")
+    st.markdown(
+        "| 特征 | 计算方式 | 业务含义 | 中位数 | 上四分位 |\n"
+        "|:---|:---|:---|:---:|:---:|\n" + "\n".join(_ext_rows))
+
+    _aov_dom, _aov_dom_pct = _dominant_bin(ext_seg['AOV'])
+    _np_dom, _np_dom_pct = _dominant_bin(ext_seg['N_products'])
+    st.caption(f"💡 **解读**: AOV 以 {_aov_dom} 档为主 ({_aov_dom_pct}%)，品类广度以 {_np_dom} 档为主 ({_np_dom_pct}%)。"
+               f"这两个特征回答的是 R/F/M 答不了的问题 —— 同样的消费总额，是「来了很多次但每次花得少」"
+               f"还是「来得不多但每次买得多」(AOV)；同样的购买次数，是「反复买同几款」还是「横向铺开买很多种」(品类广度)。")
+
+    # 五维相关性矩阵
+    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+    _corr_cols = ['Recency', 'Frequency', 'Monetary', 'AOV', 'N_products']
+    _corr_names = ['R-最近购买', 'F-购买频率', 'M-消费金额', 'AOV-平均客单价', '品类广度']
+    corr = rfm_df[_corr_cols].corr()
     _fm_r = float(corr.loc['Frequency', 'Monetary'])
-    # 定性措辞随 r 值分档, 避免数字与形容词脱节
     _fm_strength = '强' if _fm_r >= 0.7 else ('中等' if _fm_r >= 0.4 else '弱')
+    _aov_m_r = float(corr.loc['AOV', 'Monetary'])
+    _np_f_r = float(corr.loc['N_products', 'Frequency'])
+    _aov_np_r = float(corr.loc['AOV', 'N_products'])
     col_corr1, col_corr2 = st.columns([1, 2])
     with col_corr1:
-        st.subheader("🔗 RFM 相关性矩阵")
+        st.subheader("🔗 五维特征相关性")
         st.markdown(f"""
-        F (频率) 和 M (金额) 呈{_fm_strength}正相关 (r≈{_fm_r:.2f})，说明买得多的客户也倾向于花得多。
-        这一相关性是后续聚类中将 F/M 合并为 composite 特征的理论依据。
+        **F 与 M** 呈{_fm_strength}正相关 (r≈{_fm_r:.2f})，说明买得多的客户也倾向于花得多 ——
+        这是聚类中把 F/M 合并为 composite 特征的理论依据。
+
+        **两个新特征与 R/F/M 基本独立**：AOV 与 M 的相关仅 {_aov_m_r:.2f}，品类广度与 F 为 {_np_f_r:.2f}，
+        两者彼此 {_aov_np_r:.2f}。正因为不重复，它们才适合作为新增维度 —— 若选一个与 F 相关 0.7 以上的
+        特征 (如活跃月数、退货次数)，加进去只是把 F 重复算了一遍，聚类不会因此变好。
         """)
     with col_corr2:
         corr_display = corr.copy()
-        corr_display.index = ['R-最近购买', 'F-购买频率', 'M-消费金额']
-        corr_display.columns = ['R-最近购买', 'F-购买频率', 'M-消费金额']
+        corr_display.index = _corr_names
+        corr_display.columns = _corr_names
         fig_corr = px.imshow(corr_display.values,
                              x=corr_display.columns.tolist(),
                              y=corr_display.index.tolist(),
@@ -840,7 +982,7 @@ elif page == "💰 RFM 分析":
                              text_auto='.2f',
                              aspect='auto',
                              labels={'color': '相关系数'})
-        fig_corr.update_layout(**CHART_LAYOUT, height=340)
+        fig_corr.update_layout(**CHART_LAYOUT, height=420)
         st.plotly_chart(fig_corr, width='stretch')
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -970,10 +1112,21 @@ elif page == "🎯 K-Means 聚类":
                                        value=0.995, step=0.005, format="%.3f",
                                        help="将 F/M 超过该分位数的值截断，默认 0.995 (截断 top 0.5%)")
     selected_k = st.sidebar.slider("聚类数量 K", min_value=2, max_value=15, value=5, step=1)
+    feature_set = st.sidebar.selectbox(
+        "输入特征集",
+        options=['rfm_ext', 'rfm_only'],
+        format_func=lambda x: {
+            'rfm_ext': 'RFM + 扩展特征 (5 维, 推荐)',
+            'rfm_only': '仅 RFM (2-3 维)',
+        }[x],
+        help="扩展特征 = 平均客单价 AOV + 品类广度 (见第 3 页)。两者与 R/F/M 相关性低, 能提供额外信息; "
+             "切回「仅 RFM」可做对照实验, 观察加特征前后聚类质量的变化"
+    )
+    extra_features = ['AOV', 'N_products'] if feature_set == 'rfm_ext' else []
 
     # 特征准备 + 最优 K 搜索 (缓存)
     scaled, feature_names, scaler, transformed_df, elbow_result = cached_prepare_and_elbow(
-        rfm_df, cluster_method, winsorize_pct, k_range_start, k_range_end)
+        rfm_df, cluster_method, winsorize_pct, k_range_start, k_range_end, extra_features)
 
     # 最优 K 分析
     st.subheader("📐 第一步: 确定最优聚类数 K")
@@ -1051,6 +1204,8 @@ elif page == "🎯 K-Means 聚类":
 
         **需要注意的取舍**: `R_rank` 同时是第 1 维和第 2 维的组成部分, 严格讲两维不正交, 相当于把 R 在距离中"算了两次"。这是本项目**用简单性换取可解释性**的自觉取舍——从数据表现看, 2D 分离度仍显著优于 3D rank 方法; 若追求严格正交, 可考虑 PCA 降维。
 
+        **启用扩展特征后的变化 (重要)**: 侧边栏切到「RFM + 扩展特征」时, 上表的「维度」列变成 4 / 5 / 5, 两个新特征各追加一维。composite 的「降到 2D」优势此时不再成立, 但把 F/M 合并为「参与度」标量的动机不变 (F 与 M 仍中高度相关)。另一个必须知道的点: **加入弱相关的新维度会让轮廓系数下降**, 这是维度升高时的系统性现象, 不同维度数之间的轮廓系数不可直接比大小 —— 判断加特征是否有价值, 要看聚类画像里新维度在各簇之间是否真被拉开了差距 (见下方画像表的「平均客单价」「平均品类广度」两列)。
+
         **4 步优化流程 (三种方法共用)**:
         1. **Winsorizing**: 截断 F/M 的 top 0.5% 极端值
         2. **百分位排名**: `rank(pct=True)` 压缩到 0~1
@@ -1058,8 +1213,9 @@ elif page == "🎯 K-Means 聚类":
         4. **K-Means**: `n_init=50, max_iter=500` 避免局部最优
         """)
 
-        st.markdown(f"**📊 实时对比 (K={selected_k}, Winsorize={winsorize_pct:.3f})**:")
-        _cmp = cached_compare_methods(rfm_df, selected_k, winsorize_pct)
+        st.markdown(f"**📊 实时对比 (K={selected_k}, Winsorize={winsorize_pct:.3f}, "
+                    f"特征集={'RFM + 扩展' if extra_features else '仅 RFM'})**:")
+        _cmp = cached_compare_methods(rfm_df, selected_k, winsorize_pct, extra_features)
         _method_labels = {'composite': '组合特征 2D', 'rank': '百分位排名 3D', 'log': '对数变换 3D'}
         _cmp_rows = []
         for _m in ['composite', 'rank', 'log']:
@@ -1077,12 +1233,12 @@ elif page == "🎯 K-Means 聚类":
 
     # 执行聚类
     st.subheader("🎯 第二步: 聚类结果")
-    result = cached_run_kmeans(rfm_df, selected_k, cluster_method, winsorize_pct)
+    result = cached_run_kmeans(rfm_df, selected_k, cluster_method, winsorize_pct, extra_features)
     profile = result['cluster_profile']
     clustered_df = result['clustered_df']
     labels = get_cluster_labels(profile)
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.metric("聚类数量", f"{selected_k} 组")
     with col2:
@@ -1090,7 +1246,10 @@ elif page == "🎯 K-Means 聚类":
     with col3:
         st.metric("参与聚类客户", f"{len(clustered_df):,} 人")
     with col4:
-        method_labels = {'composite': '组合特征 2D', 'rank': '百分位排名 3D', 'log': '对数变换 3D'}
+        st.metric("输入维度", f"{len(feature_names)} 维",
+                  help=f"特征集: {'RFM + 扩展特征' if extra_features else '仅 RFM'}；扩展特征为 AOV 与品类广度")
+    with col5:
+        method_labels = {'composite': '组合特征', 'rank': '百分位排名', 'log': '对数变换'}
         st.metric("变换方法", method_labels[cluster_method], help="n_init=50, max_iter=500")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -1174,44 +1333,37 @@ elif page == "🎯 K-Means 聚类":
             plot_2d[_col] = _src[_col]
     plot_2d['聚类标签'] = plot_2d['Cluster'].map(lambda c: f"C{c}: {labels[c]['name']}")
 
+    # 各维度在界面上的中文名 (log 方法的 R/F/M 三列存的是 log1p 后的值)
+    _axis_names = {
+        'R_rank': 'R-时效性 (排名)', 'RFM_composite': 'RFM-参与度 (综合排名)',
+        'AOV_rank': 'AOV-平均客单价 (排名)', 'N_products_rank': '品类广度 (排名)',
+        'Recency': 'R (最近购买)', 'Frequency': 'F (购买频率)', 'Monetary': 'M (消费金额)',
+    }
+    if cluster_method == 'log':
+        _axis_names.update({'Recency': 'log(R)', 'Frequency': 'log(F)', 'Monetary': 'log(M)'})
+
     if len(feature_names) == 2:
         _fx, _fy = feature_names[0], feature_names[1]
         _dim_note = ""
     else:
-        # 3D 方法: 让用户选择展示哪两个维度 (聚类实际发生在 3D, 此处为 2D 切片)
-        _axis_names = {
-            'Recency': 'R (最近购买)', 'Frequency': 'F (购买频率)', 'Monetary': 'M (消费金额)',
-        }
+        # 聚类实际发生在更高维空间, 这里选两个维度做 2D 切片查看
         _pairs = [(feature_names[i], feature_names[j])
                   for i in range(len(feature_names))
                   for j in range(i + 1, len(feature_names))]
         _picked = st.selectbox(
-            "当前方法在 3D 空间聚类, 请选择展示哪两个维度 (点击切换不同切片):",
+            f"当前方法在 {len(feature_names)} 维空间聚类, 请选择展示哪两个维度 (点击切换不同切片):",
             options=_pairs,
             index=0,
             format_func=lambda t: f"{_axis_names.get(t[0], t[0])} vs {_axis_names.get(t[1], t[1])}",
-            key=f"dim_pair_{cluster_method}",
+            # key 必须带上特征集: 否则切换特征集后旧选中值已不在 options 里
+            key=f"dim_pair_{cluster_method}_{feature_set}",
         )
         _fx, _fy = _picked
-        _dim_note = f" — 3D 空间切片 (完整聚类维度: {', '.join(_axis_names.get(c, c) for c in feature_names)})"
+        _dim_note = (f" — {len(feature_names)} 维空间切片 (完整聚类维度: "
+                     f"{', '.join(_axis_names.get(c, c) for c in feature_names)})")
 
-    _xl = _fx if _fx not in ('R_rank',) else 'R-时效性 (排名)'
-    if _fy == 'RFM_composite':
-        _yl = 'RFM-参与度 (综合排名)'
-    else:
-        _yl = _fy
-    if _fx == 'Recency' and cluster_method == 'log':
-        _xl = 'log(R)'
-    elif _fx == 'Frequency' and cluster_method == 'log':
-        _xl = 'log(F)'
-    elif _fx == 'Monetary' and cluster_method == 'log':
-        _xl = 'log(M)'
-    if _fy == 'Recency' and cluster_method == 'log':
-        _yl = 'log(R)'
-    elif _fy == 'Frequency' and cluster_method == 'log':
-        _yl = 'log(F)'
-    elif _fy == 'Monetary' and cluster_method == 'log':
-        _yl = 'log(M)'
+    _xl = _axis_names.get(_fx, _fx)
+    _yl = _axis_names.get(_fy, _fy)
 
     fig_2d = px.scatter(
         plot_2d, x=_fx, y=_fy,
@@ -1246,11 +1398,18 @@ elif page == "🎯 K-Means 聚类":
         st.subheader("📊 聚类画像 (Cluster Profile)")
         display_profile = profile.copy()
         display_profile['标签'] = display_profile.index.map(lambda c: labels[c]['name'])
-        display_profile = display_profile[['标签', 'Customers', 'Pct_Customers',
-                                           'Avg_Recency', 'Avg_Frequency', 'Avg_Monetary',
-                                           'Total_Revenue', 'Pct_Revenue']]
-        display_profile.columns = ['客户分群', '客户数', '客户占比%', '平均R(天)',
-                                   '平均F(次)', '平均M($)', '总收入', '收入占比%']
+        _prof_cols = ['标签', 'Customers', 'Pct_Customers',
+                      'Avg_Recency', 'Avg_Frequency', 'Avg_Monetary']
+        _prof_names = ['客户分群', '客户数', '客户占比%', '平均R(天)', '平均F(次)', '平均M($)']
+        # 启用扩展特征时把两个新维度的各簇均值也放进画像 (列名取 EXTENDED_FEATURE_INFO)
+        for _key, _meta in EXTENDED_FEATURE_INFO.items():
+            if f'Avg_{_key}' in display_profile.columns:
+                _prof_cols.append(f'Avg_{_key}')
+                _prof_names.append(_meta['name'])
+        _prof_cols += ['Total_Revenue', 'Pct_Revenue']
+        _prof_names += ['总收入', '收入占比%']
+        display_profile = display_profile[_prof_cols]
+        display_profile.columns = _prof_names
         st.dataframe(display_profile, width='stretch', hide_index=True)
 
     with col_right:
@@ -1304,6 +1463,12 @@ elif page == "🎯 K-Means 聚类":
     for idx, cluster_id in enumerate(profile.index):
         with cols[idx % len(cols)]:
             color = card_colors[cluster_id % len(card_colors)]
+            # 扩展特征启用时, 卡片里补上这两个维度的簇均值
+            _ext_html = ''
+            if 'Avg_AOV' in profile.columns:
+                _ext_html += f"平均客单价: <b>${profile.loc[cluster_id, 'Avg_AOV']:,.0f}</b><br>\n                    "
+            if 'Avg_N_products' in profile.columns:
+                _ext_html += f"平均品类广度: <b>{profile.loc[cluster_id, 'Avg_N_products']:.0f} 种</b><br>\n                    "
             st.markdown(f"""
             <div class="cluster-card" style="border-left-color: {color};">
                 <h3 style="color: {color}; margin: 0; font-size: 16px;">
@@ -1317,7 +1482,7 @@ elif page == "🎯 K-Means 聚类":
                     平均 R: <b>{profile.loc[cluster_id, 'Avg_Recency']:.0f} 天</b><br>
                     平均 F: <b>{profile.loc[cluster_id, 'Avg_Frequency']:.1f} 次</b><br>
                     平均 M: <b>${profile.loc[cluster_id, 'Avg_Monetary']:,.2f}</b><br>
-                    收入占比: <b>{profile.loc[cluster_id, 'Pct_Revenue']}%</b><br>
+                    {_ext_html}收入占比: <b>{profile.loc[cluster_id, 'Pct_Revenue']}%</b><br>
                     簇轮廓系数: <b>{result['silhouette_per_cluster'].get(cluster_id, 0):.3f}</b>
                 </p>
             </div>
@@ -1342,6 +1507,7 @@ elif page == "🎯 K-Means 聚类":
     col_map = {
         'Recency': 'R-最近购买', 'Frequency': 'F-购买频率', 'Monetary': 'M-消费金额',
         'R_rank': 'R-最近购买 (排名)', 'RFM_composite': 'RFM 综合参与度',
+        'AOV_rank': 'AOV-平均客单价 (排名)', 'N_products_rank': '品类广度 (排名)',
     }
     centers.columns = [col_map.get(c, c) for c in centers.columns]
 
@@ -1354,7 +1520,16 @@ elif page == "🎯 K-Means 聚类":
     fig_heat.update_layout(**CHART_LAYOUT, height=400,
                            xaxis_title='', yaxis_title='')
     st.plotly_chart(fig_heat, width='stretch')
-    st.caption("💡 **解读**: 热力图将聚类中心归一化到 0-1 区间，颜色越绿表示该维度得分越高。可快速识别每个簇的'强项'和'弱项'——例如重要价值客户在各维度上得分接近 1，而流失客户各维度均偏低。组合特征方法将 R/F/M 压缩为 2 个可解释维度——**时效性 (R_rank)** 与 **综合参与度 (RFM_composite = R+F+M 排名之和)**; 两维共享 R 项, 存在正相关而非严格正交, 属于用简单性换可解释性的自觉取舍 (详见「三种方法对比」展开)。")
+    _heat_tail = (" 当前特征集包含扩展特征, 因此热力图除 R/F/M 相关维度外还有 **AOV-平均客单价 (排名)** 与 "
+                  "**品类广度 (排名)** 两列 —— 它们在各个簇之间是否呈现明显的颜色差异, 就是这两个新特征"
+                  "究竟有没有真正参与分群的直接证据 (若各簇颜色几乎一样, 说明该维度对聚类没有贡献)。"
+                  if extra_features else
+                  " 组合特征方法将 R/F/M 压缩为 2 个可解释维度——**时效性 (R_rank)** 与 "
+                  "**综合参与度 (RFM_composite = R+F+M 排名之和)**; 两维共享 R 项, 存在正相关而非严格正交, "
+                  "属于用简单性换可解释性的自觉取舍 (详见「三种方法对比」展开)。")
+    st.caption("💡 **解读**: 热力图将聚类中心归一化到 0-1 区间，颜色越绿表示该维度得分越高。"
+               "可快速识别每个簇的'强项'和'弱项'——例如重要价值客户在各维度上得分接近 1，而流失客户各维度均偏低。"
+               + _heat_tail)
 
 # ============================================================
 # 页面 5: 关联规则分析
@@ -1366,14 +1541,17 @@ elif page == "🔗 关联规则分析":
     # --- 侧边栏参数 ---
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🔗 关联规则参数")
+    # 两个阈值的量程由页面内「阈值范围如何确定」的网格扫描反推得到, 不再取更宽的空区间:
+    # 支持度 > 0.03 时规则数不足 10 条, > 0.05 时一条规则都挖不出; 置信度 > 0.7 同理
     assoc_min_support = st.sidebar.slider(
-        "最小支持度 (min_support)", min_value=0.005, max_value=0.10,
+        "最小支持度 (min_support)", min_value=0.005, max_value=0.030,
         value=0.02, step=0.005, format="%.3f",
-        help="商品组合至少出现在多少比例的交易中。值越小规则越多但计算越慢。")
+        help="商品组合至少出现在多少比例的交易中。值越小规则越多但计算越慢。"
+             "量程由下方敏感性扫描确定: 上限 0.030 (再高则可用规则不足 10 条), 下限 0.005 (再低规则数爆炸且多为偶然组合)。")
     assoc_min_confidence = st.sidebar.slider(
-        "最小置信度 (min_confidence)", min_value=0.1, max_value=0.9,
+        "最小置信度 (min_confidence)", min_value=0.1, max_value=0.7,
         value=0.3, step=0.05, format="%.2f",
-        help="规则 A→B 中，买 A 的客户有多大比例也买了 B。")
+        help="规则 A→B 中，买 A 的客户有多大比例也买了 B。量程由下方敏感性扫描确定: 超过 0.70 后规则数不足以支撑筛选。")
     assoc_top_items = st.sidebar.slider(
         "分析商品数 (Top-N)", min_value=50, max_value=300,
         value=100, step=10,
@@ -1412,6 +1590,80 @@ elif page == "🔗 关联规则分析":
         st.metric("频繁项集", f"{len(itemsets_df)}")
     with kpi4:
         st.metric("关联规则数", f"{len(rules_df)}")
+
+    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+
+    # --- 阈值敏感性分析: 支持度/置信度的量程是"扫出来"的, 不是随手定的 ---
+    st.subheader("🎚️ 阈值范围如何确定 (敏感性扫描)")
+    st.caption("把支持度与置信度在全量程上做网格扫描, 看规则数随阈值如何变化, 再据此划定合理区间 —— "
+               "侧边栏两个滑块的量程就是这么来的。")
+
+    _sweep, _sup_info = cached_threshold_sweep(cleaned_df, assoc_top_items, len(cleaned_df))
+    _sw1, _sw2 = st.columns(2)
+
+    with _sw1:
+        _pivot = _sweep.pivot(index='支持度', columns='置信度', values='规则数')
+        fig_sw = px.imshow(_pivot.values,
+                           x=[f"{c:.1f}" for c in _pivot.columns],
+                           y=[f"{s:.3f}" for s in _pivot.index],
+                           color_continuous_scale='YlGnBu',
+                           text_auto=True, aspect='auto',
+                           labels={'x': '最小置信度', 'y': '最小支持度', 'color': '规则数'})
+        fig_sw.update_layout(**CHART_LAYOUT, height=430,
+                             title="规则数 = f(支持度, 置信度)")
+        st.plotly_chart(fig_sw, width='stretch')
+
+    with _sw2:
+        fig_line = go.Figure()
+        for _c in [0.1, 0.3, 0.5, 0.7]:
+            _sub = _sweep[_sweep['置信度'] == _c]
+            if _sub.empty:
+                continue
+            fig_line.add_trace(go.Scatter(
+                x=_sub['支持度'], y=_sub['规则数'], mode='lines+markers',
+                name=f'置信度 {_c:.1f}'))
+        fig_line.update_layout(**CHART_LAYOUT, height=430,
+                               title="规则数随支持度的衰减 (每条线一个置信度档)",
+                               xaxis_title='最小支持度', yaxis_title='规则数')
+        st.plotly_chart(fig_line, width='stretch')
+
+    # 推荐区间以「规则数仍不少于 10 条」为可操作下限 —— 与规则详情表的滑块下限一致,
+    # 避免定出一个理论上能调、实际上选不出规则的空区间
+    _MIN_RULES = 10
+    _ok = _sweep[_sweep['规则数'] >= _MIN_RULES]
+    _sup_min = _sweep['支持度'].min()
+    _n_at_min_sup = int(_sweep[_sweep['支持度'] == _sup_min]['规则数'].max())
+    # 死区 = 跨**所有**置信度都挖不出规则的最小支持度 (不能只看某一档置信度下的 0)
+    _sup_max_rules = _sweep.groupby('支持度')['规则数'].max()
+    _dead_sups = _sup_max_rules[_sup_max_rules == 0]
+    _dead_txt = f"{_dead_sups.index.min():.3f}" if len(_dead_sups) else "—"
+    _sup_hi_txt = f"{_ok['支持度'].max():.3f}" if len(_ok) else "—"
+    _conf_hi_txt = f"{_ok['置信度'].max():.2f}" if len(_ok) else "—"
+    _max_pair_sup = _sup_info['max_pair_support']
+    _max_item_sup = _sup_info['max_item_support']
+    # 当前规则表的最高 lift (规则为空时用 — 占位, 避免写死数字随参数漂移)
+    _cur_max_lift = float(rules_df['lift'].max()) if not rules_df.empty else float('nan')
+    _cur_lift_txt = f"{_cur_max_lift:.2f}" if _cur_max_lift == _cur_max_lift else "—"
+
+    st.markdown(f"""
+**扫描结论** (分析商品数 Top-{assoc_top_items}):
+
+| 参数 | 量程上的表现 | 推荐区间 | 依据 |
+|:---|:---|:---|:---|
+| 最小支持度 | 最低档 {_sup_min:.3f} 时规则数达 {_n_at_min_sup:,} 条; 升到 **{_dead_txt} 之后一条规则都挖不出** | **{_sup_min:.3f} ~ {_sup_hi_txt}** | 上界: 再高则规则数不足 {_MIN_RULES} 条, 无法支撑筛选; 下界: 再低规则数爆炸且大量退化为长尾偶然组合 |
+| 最小置信度 | 0.1 时规则最多, 0.9 时几乎为 0 | **0.10 ~ {_conf_hi_txt}** | 上界: 置信度越高规则越少, 超过后不足 {_MIN_RULES} 条 |
+
+**为什么支持度上界必须压得这么低?** 一条规则至少要求**两种商品同时出现**, 而本数据集里**商品对**的最高支持度
+只有 **{_max_pair_sup:.2%}** —— 阈值一旦超过它, 连最高频的那一对商品都进不了频繁项集, 必然一条规则都挖不出来
+({_dead_txt} 以上正是这个死区)。作为对照, 最高频**单品**的支持度高达 {_max_item_sup:.1%}; 单品与商品对之间这么大的落差,
+说明这个数据集的商品共现其实相当分散 —— 这也解释了为什么零售购物篮分析的 min_support 通常都取得很低。
+原先滑块上界设到 0.10, 可调区间有一半以上是空的, 现已按扫描结果收到 {_sup_hi_txt}。
+
+**一个反直觉的现象**: 支持度越低规则越多, 而且**最高提升度反而更高**
+(本次扫描中 0.005 档最高 lift 达 {_sweep['最高提升度'].max():.1f}, 而当前参数下的最高 lift 为 {_cur_lift_txt})。
+但低支持度的规则大多只覆盖几十笔交易, 属于长尾偶然共现, 所以本项目默认取 0.02 而不是一味求多 ——
+**这就是"确定阈值范围"要平衡的两端: 规则数量、规则强度与统计可靠性**。
+""")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -1617,6 +1869,46 @@ elif page == "🔗 关联规则分析":
                                   value=min(20, _n_rules), step=5)
         st.dataframe(display_rules.head(n_display), width='stretch', hide_index=True)
 
+        st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+
+        # --- 基于规则的营销方案 ---
+        st.subheader("🎯 基于关联规则的营销方案")
+        st.caption("把规则按提升度分档, 直接翻译成可执行的营销动作。同一个商品组合只出一条方案 "
+                   "(A→B 与 B→A 是同一个组合, 已去重)。")
+
+        def _cn_join(names):
+            """把 'A + B' 形式的商品组合逐个翻译成中文名"""
+            return ' + '.join(_cn(i.strip()) for i in names.split(' + '))
+
+        _mkt_n = st.selectbox("生成方案的规则条数", options=[5, 10, 15, 20], index=1,
+                              help=f"按提升度从高到低取前 N 条商品组合; 当前共 {len(rules_df)} 条规则")
+        _mkt = build_marketing_actions(rules_df, top_n=_mkt_n)
+        _mkt_display = _mkt.copy()
+        _mkt_display['前项'] = _mkt_display['前项'].map(_cn_join)
+        _mkt_display['后项'] = _mkt_display['后项'].map(_cn_join)
+        _mkt_display.columns = ['前项 (买了这个)', '后项 (也买了这个)', '支持度',
+                                '置信度', '提升度', '关联力度', '建议动作']
+        st.dataframe(_mkt_display, width='stretch', hide_index=True, height=380)
+
+        _mkt_strong = int((_mkt['关联力度'] == '强').sum())
+        _mkt_mid = int((_mkt['关联力度'] == '中').sum())
+        _mkt_weak = int((_mkt['关联力度'] == '弱').sum())
+        _top_pair = _mkt.iloc[0]
+        st.markdown(f"""
+**怎么用这张表**: 方案已按提升度从高到低排好, 前 {len(_mkt)} 个组合里
+**强关联 {_mkt_strong} 个 / 中等 {_mkt_mid} 个 / 较弱 {_mkt_weak} 个**:
+
+- **强关联 (lift ≥ 10)** —— 共现强度是随机出现的 10 倍以上, 可以直接做成套装或配套商品主推。
+  当前最高的一条是「{_cn_join(_top_pair['前项'])}」↔「{_cn_join(_top_pair['后项'])}」(lift {_top_pair['提升度']})。
+- **中等关联 (5 ≤ lift < 10)** —— 适合货架相邻陈列, 或在商品详情页做同页推荐, 不一定需要打包销售。
+- **较弱关联 (lift < 5)** —— 力度不足以单独做活动, 适合放进凑单推荐位或作为满额赠品候选。
+
+**落地时的两点提醒**:
+1. 表里是**商品名**, 实际执行要换成业务系统里的 SKU/商品编号, 并按库存与毛利复核套装定价;
+2. 关联规则只说明「一起买」, 不区分因果 —— 有些组合是顾客本来就打算成套买的 (如三色餐具套装),
+   这类做成套装是顺势而为; 更有商业价值的往往是那些**顾客自己未必意识到可以搭配**的组合。
+""")
+
         with st.expander("📖 指标含义说明"):
             st.markdown("""
 **支持度 (Support)**: 规则中所有商品同时出现在一笔交易中的概率。
@@ -1633,3 +1925,148 @@ elif page == "🔗 关联规则分析":
 - **答辩重点**: 提升度是衡量关联规则是否有意义的最核心指标。一条规则即使置信度很高，
   但如果后项本身就是热门商品 (P(B) 很大)，提升度可能接近 1，说明关联并不强。
             """)
+
+# ============================================================
+# 页面 6: 商品与国家调查
+# ============================================================
+elif page == "📦 商品与国家调查":
+    st.title("📦 商品与国家调查")
+    st.markdown("针对 **商品描述 (Description)** 与 **用户所在国家 (Country)** 两个特征的业务探索 —— "
+                "前者是文本字段，必须先拆成可解释的品类才能统计；后者分布高度集中，"
+                "直接当聚类特征几乎没有区分度，但拆成「本土 vs 海外」后价值差异很明显。")
+
+    # ===================== 一、商品描述 =====================
+    st.subheader("🏷️ 商品描述 (Description) 分析")
+    st.markdown(f"""
+    Description 是**文本字段**，无法直接进模型。这里的处理办法是：先把交易聚合到商品粒度
+    (共 **{cleaning_summary['unique_products']:,}** 种)，再从描述里提取高频词，把商品自动归到
+    「品类 / 系列」上，然后比较各品类的表现。
+
+    > **口径说明**: 一个商品可能同时命中多个词 (如 `JUMBO BAG PINK WITH WHITE SPOTS` 含 JUMBO / BAG / PINK / SPOTS)，
+    > 因此各词的收入合计互相重叠，**不能相加当作总量**。描述字段本身的缺失记录
+    > ({quality_report['missing_description']:,} 条, {quality_report['missing_description_pct']}%) 已在清洗阶段移除。
+    """)
+
+    _word_topn = st.slider("显示品类词数量", min_value=8, max_value=25, value=15, step=1,
+                           key="word_topn")
+    _words = cached_description_words(cleaned_df, _word_topn)
+
+    _w1, _w2 = st.columns(2)
+    with _w1:
+        fig_word = px.bar(_words.sort_values('收入'), x='收入', y='关键词', orientation='h',
+                          color='平均单价', color_continuous_scale='Viridis',
+                          hover_data={'商品数': True, '销量': True, '平均单价': ':.2f'})
+        fig_word.update_layout(**CHART_LAYOUT, height=430,
+                               title='各品类词的收入贡献 (颜色 = 平均单价)',
+                               yaxis={'categoryorder': 'total ascending'},
+                               xaxis_title='收入 (美元 $)',
+                               coloraxis_colorbar=dict(title='平均单价'))
+        st.plotly_chart(fig_word, width='stretch')
+    with _w2:
+        fig_ps = px.scatter(_words, x='销量', y='平均单价', size='收入', color='收入',
+                            color_continuous_scale='Plasma', hover_name='关键词', log_x=True,
+                            labels={'销量': '总销量 (件)', '平均单价': '平均单价 ($)'})
+        fig_ps.update_layout(**CHART_LAYOUT, height=430,
+                             title='销量 vs 平均单价 (气泡大小 = 收入)')
+        st.plotly_chart(fig_ps, width='stretch')
+
+    _word_table = _words[['关键词', '商品数', '收入', '收入占比%', '销量', '平均单价']].copy()
+    _word_table.columns = ['品类词', '商品数', '收入 ($)', '收入占比%', '销量 (件)', '平均单价 ($)']
+    st.dataframe(_word_table, width='stretch', hide_index=True)
+
+    # 动态取值, 避免把结论写死
+    _top_word = _words.iloc[0]
+    _hi_price_word = _words.sort_values('平均单价', ascending=False).iloc[0]
+    st.caption(f"💡 **解读**: 收入贡献最高的是 **{_top_word['关键词']}** (覆盖 {int(_top_word['商品数'])} 种商品, "
+               f"收入 ${_top_word['收入']:,.0f}, 占全站 {_top_word['收入占比%']}%), 可视为店铺的基本盘品类; "
+               f"平均单价最高的是 **{_hi_price_word['关键词']}** (${_hi_price_word['平均单价']:.2f}/件), 属高客单价品类。"
+               f"右图把品类分成两类 — 右下角是**走量低价**的引流型品类, 左上角是**高单价低销量**的利润型品类; "
+               f"前者适合做曝光与凑单, 后者更适合重点推荐与会员专享。")
+
+    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+
+    # ===================== 二、用户所在国家 =====================
+    st.subheader("🌍 用户所在国家 (Country) 分析")
+
+    _country = cached_country_summary(cleaned_df)
+    _uk_ov = cached_uk_overseas(cleaned_df, rfm_df)
+    _uk_row = _uk_ov.loc['英国本土'] if '英国本土' in _uk_ov.index else None
+    _ov_row = _uk_ov.loc['海外'] if '海外' in _uk_ov.index else None
+
+    _uk_rev_share = float(
+        _country.loc[_country['Country'] == 'United Kingdom', '收入占比%'].iloc[0])
+    _ov_n = int(_ov_row['客户数']) if _ov_row is not None else 0
+    _ov_aov = float(_ov_row['AOV']) if _ov_row is not None else 0.0
+    _ov_mon = float(_ov_row['Monetary']) if _ov_row is not None else 0.0
+    _ov_rev_share = float(_ov_row['收入占比%']) if _ov_row is not None else 0.0
+    _uk_mon = float(_uk_row['Monetary']) if _uk_row is not None else 0.0
+    _uk_aov = float(_uk_row['AOV']) if _uk_row is not None else 0.0
+
+    _ck1, _ck2, _ck3, _ck4 = st.columns(4)
+    with _ck1:
+        st.metric("覆盖国家/地区", f"{len(_country)} 个")
+    with _ck2:
+        st.metric("英国收入占比", f"{_uk_rev_share:.1f}%")
+    with _ck3:
+        st.metric("海外客户数", f"{_ov_n:,} 人", help="英国以外的客户, 按客户所属国家划分")
+    with _ck4:
+        st.metric("海外平均客单价", f"${_ov_aov:,.0f}",
+                  help=f"英国本土为 ${_uk_aov:,.0f}")
+
+    _cvv1, _cvv2 = st.columns([1, 1])
+    with _cvv1:
+        st.markdown("**本土 vs 海外 客户画像**")
+        _prof = _uk_ov.copy()
+        _prof['客户占比%'] = (_prof['客户数'] / _prof['客户数'].sum() * 100).round(1)
+        _prof_disp = _prof[['客户数', '客户占比%', 'Recency', 'Frequency', 'Monetary',
+                            'AOV', 'N_products', '收入占比%']]
+        _prof_disp.columns = ['客户数', '客户占比%', '平均R(天)', '平均F(次)', '平均消费($)',
+                              '平均客单价($)', '平均品类广度(种)', '收入占比%']
+        st.dataframe(_prof_disp, width='stretch')
+    with _cvv2:
+        _cmp_df = pd.DataFrame({
+            '区域': list(_prof.index) * 2,
+            '占比%': list(_prof['客户占比%']) + list(_prof['收入占比%']),
+            '口径': ['客户占比'] * len(_prof) + ['收入占比'] * len(_prof),
+        })
+        fig_ov = px.bar(_cmp_df, x='区域', y='占比%', color='口径', barmode='group',
+                        text='占比%',
+                        color_discrete_sequence=[COLORS['primary'], COLORS['success']])
+        fig_ov.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+        fig_ov.update_layout(**CHART_LAYOUT, height=340,
+                             title='客户占比 vs 收入占比 (价值集中度)',
+                             yaxis_title='占比 (%)', xaxis_title='')
+        st.plotly_chart(fig_ov, width='stretch')
+
+    st.caption(f"💡 **解读**: 英国以 {_uk_rev_share:.1f}% 的收入占比绝对主导, 但只看收入会漏掉一个事实 —— "
+               f"**海外客户人少、单体价值却明显更高**: 海外 {_ov_n:,} 人贡献了 {_ov_rev_share:.1f}% 的收入, "
+               f"平均消费 ${_ov_mon:,.0f} (英国 ${_uk_mon:,.0f})、平均客单价 ${_ov_aov:,.0f} (英国 ${_uk_aov:,.0f})。"
+               f"这与国家维度的另一个特点吻合: 海外多为**批发型小客户**, 人少但单笔金额大。"
+               f"对应到运营上, 本土适合做频次与复购, 海外更适合做客单价与批发阶梯价。")
+
+    st.markdown("#### 📋 国家明细 (按收入排序)")
+    _cshow = st.selectbox("显示数量", options=[10, 15, 20, 30], index=1,
+                          help=f"数据共覆盖 {len(_country)} 个国家/地区")
+    _country_show = _country[['Country', '客户数', '收入', '收入占比%', '订单数',
+                              '客单价', '复购率%', '商品种类数']].head(_cshow).copy()
+    _country_show.columns = ['国家', '客户数', '收入 ($)', '收入占比%', '订单数',
+                             '客单价 ($)', '复购率%', '商品种类数']
+    st.dataframe(_country_show, width='stretch', hide_index=True)
+
+    st.markdown("#### 📈 收入 Top 5 国家的月度收入构成")
+    _cm = cached_country_monthly(cleaned_df, 5)
+    _cm_cols = [c for c in _cm.columns if c != '月份']
+    _cm_disp = _cm.copy()
+    _cm_disp['月份'] = _cm_disp['月份'].dt.strftime('%Y-%m')
+    fig_cm = px.area(_cm_disp, x='月份', y=_cm_cols,
+                     labels={'value': '收入 (美元 $)', 'variable': '国家'},
+                     color_discrete_sequence=COLORS['palette'])
+    fig_cm.update_layout(**CHART_LAYOUT, height=420,
+                         title='收入 Top 5 国家的月度收入构成',
+                         xaxis_title='月份', yaxis_title='收入 (美元 $)',
+                         legend=dict(orientation='h', yanchor='bottom', y=1.02,
+                                     xanchor='center', x=0.5))
+    st.plotly_chart(fig_cm, width='stretch')
+    st.caption("💡 **解读**: 面积图的整体形状与第 1 页的月度收入趋势一致 (11 月冲高、12 月是不完整月份), "
+               "但分层后可以看出海外市场的相对份额是否在上升 —— 若顶部几层 (海外国家) 的厚度随时间变厚, "
+               "说明海外业务的增速快于本土, 值得单独投入资源；反之则说明增长仍主要靠英国本土。")
