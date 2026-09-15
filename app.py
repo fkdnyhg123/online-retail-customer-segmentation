@@ -178,8 +178,10 @@ COLORS = {
     'warning': '#d97706',
     'danger': '#dc2626',
     'info': '#0891b2',
+    # 15 色与侧边栏 K 上限 (15) 对齐: 3D 分群图按群序号直接取色, 色数少于 K 会 IndexError
     'palette': ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626',
-                '#0891b2', '#c026d3', '#ea580c', '#0d9488', '#4f46e5'],
+                '#0891b2', '#c026d3', '#ea580c', '#0d9488', '#4f46e5',
+                '#65a30d', '#ec4899', '#991b1b', '#1e3a8a', '#6b7280'],
 }
 
 CHART_LAYOUT = dict(
@@ -543,11 +545,13 @@ if page == "📈 数据概览":
         '阶段': ['清洗前'] * 4 + ['清洗后'] * 4,
     })
     fig_compare = px.bar(_compare_df, x='指标', y='数量', color='阶段',
-                         barmode='group',
+                         barmode='group', text='数量',
                          color_discrete_map={'清洗前': COLORS['danger'], '清洗后': COLORS['success']},
                          labels={'数量': '数量', '指标': '', '阶段': ''})
-    fig_compare.update_traces(textposition='outside', textfont=dict(size=11),
-                              text=_compare_df['数量'].map(lambda x: f"{x:,}"))
+    # text 必须按列传给 px: 若改用 update_traces(text=...), 同一份 8 元素数组会被套到两条各 4 点的
+    # trace 上, plotly 各取前 4 个, 清洗后柱子就会标成清洗前的数值
+    fig_compare.update_traces(texttemplate='%{text:,}', textposition='outside',
+                              textfont=dict(size=11))
     fig_compare.update_layout(
         **CHART_LAYOUT, height=380,
         title="数据规模: 清洗前 vs 清洗后",
@@ -947,7 +951,11 @@ elif page == "🎯 K-Means 聚类":
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ⚙️ 聚类参数")
     k_range_start = st.sidebar.number_input("K 搜索范围 (起始)", min_value=2, max_value=14, value=2, step=1)
-    k_range_end = st.sidebar.number_input("K 搜索范围 (结束)", min_value=int(k_range_start) + 1, max_value=15, value=10, step=1)
+    # value 必须跟随 min_value 一起抬升: 否则把起始调到 11 时 min_value=12 而写死的 value 仍是 10,
+    # Streamlit 会抛 StreamlitValueBelowMinError 中断整页
+    k_range_end = st.sidebar.number_input(
+        "K 搜索范围 (结束)", min_value=int(k_range_start) + 1, max_value=15,
+        value=max(int(k_range_start) + 1, 10), step=1)
     cluster_method = st.sidebar.selectbox(
         "特征变换方法",
         options=['composite', 'rank', 'log'],
@@ -1291,8 +1299,7 @@ elif page == "🎯 K-Means 聚类":
     # 聚类详情卡片
     st.subheader("📇 各聚类详情")
     cols = st.columns(min(selected_k, 5))
-    card_colors = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626',
-                   '#0891b2', '#c026d3', '#ea580c', '#0d9488', '#4f46e5']
+    card_colors = COLORS['palette']
 
     for idx, cluster_id in enumerate(profile.index):
         with cols[idx % len(cols)]:
@@ -1373,12 +1380,12 @@ elif page == "🔗 关联规则分析":
         help="只取购买频次最高的前 N 种商品参与分析，控制计算量。")
 
     # --- 缓存计算 ---
-    # 注意: `_df` / `_n_rows` 带下划线前缀 → Streamlit 不将其计入缓存哈希
+    # 注意: `_df` / `_n_rows` 均带下划线前缀 → Streamlit 两个都不计入缓存哈希
     # (40 万行 DataFrame 逐次哈希开销过大, 属刻意的性能取舍)。
-    # 因此缓存键实际为 (行数, min_support, min_confidence, top_items)。
+    # 因此缓存键实际只有 (min_support, min_confidence, top_items), 数据本身不在键里。
     # 当前单数据集 + 上层 Parquet 内容指纹已覆盖「换数据源」「改清洗逻辑」两条失效路径;
-    # 若将来支持多数据集切换, 需把 DATA_PATH 一并纳入缓存键, 否则行数相同的
-    # 两份数据会互相命中脏缓存。
+    # 若将来支持多数据集切换, 必须把数据源标识以「不带下划线」的形参显式纳入缓存键,
+    # 否则两份数据会互相命中脏缓存。
     @st.cache_data(show_spinner="正在运行 FP-Growth 关联规则挖掘...")
     def cached_association(_df, min_support, min_confidence, top_items, _n_rows):
         basket = prepare_basket_matrix(_df, top_n_items=top_items)
@@ -1553,13 +1560,14 @@ elif page == "🔗 关联规则分析":
             ))
 
             fig_net.update_layout(**CHART_LAYOUT, height=600,
-                                  title="商品关联网络 (节点大小=关联数量，连线=关联规则方向)")
+                                  title="商品关联网络 (节点大小=关联数量，连线=两者存在关联规则)")
             fig_net.update_layout(
                 xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                 yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                 margin=dict(l=20, r=20, t=50, b=20))
             st.plotly_chart(fig_net, width='stretch')
-            st.caption("💡 **解读**: 每个节点是一种商品，连线表示存在关联规则 (箭头方向: 前项→后项)。"
+            st.caption("💡 **解读**: 每个节点是一种商品，连线表示两者之间存在关联规则。"
+                       "这里是无向展示: 强关联往往互为前项与后项 (如粉色↔蓝色餐具套装)，逐条规则的方向请看上方散点图与下方详情表的「前项 → 后项」。"
                        "节点越大说明该商品参与的关联规则越多 (是「枢纽」商品)；鼠标悬停连线可查看该规则的提升度与置信度。"
                        "可以识别出哪些商品经常被一起购买，用于捆绑销售或货架陈列优化。")
         else:
@@ -1599,8 +1607,14 @@ elif page == "🔗 关联规则分析":
         display_rules['置信度'] = display_rules['置信度'].map(lambda x: f"{x:.1%}")
         display_rules['提升度'] = display_rules['提升度'].map(lambda x: f"{x:.2f}")
 
-        n_display = st.slider("显示规则数量", min_value=10, max_value=min(100, len(display_rules)),
-                              value=min(20, len(display_rules)), step=5)
+        _n_rules = len(display_rules)
+        if _n_rules <= 10:
+            # 规则数低于滑块下限 (10) 时不给滑块: 否则 min_value > max_value, 整页直接中断
+            n_display = _n_rules
+            st.caption(f"当前参数下共 {_n_rules} 条规则，已全部显示。")
+        else:
+            n_display = st.slider("显示规则数量", min_value=10, max_value=min(100, _n_rules),
+                                  value=min(20, _n_rules), step=5)
         st.dataframe(display_rules.head(n_display), width='stretch', hide_index=True)
 
         with st.expander("📖 指标含义说明"):
