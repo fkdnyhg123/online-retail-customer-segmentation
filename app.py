@@ -394,11 +394,11 @@ def _dominant_bin(info):
 @st.cache_data(show_spinner=False)
 def cached_prepare_and_elbow(_rfm_df, method, winsorize_pct, k_start, k_end, extra_features):
     """特征工程 + 最优 K 搜索 (缓存, 避免每次交互重跑)"""
-    scaled, feature_names, scaler, transformed_df = prepare_features(
+    scaled, feature_names, scaler, transformed_df, pca_model = prepare_features(
         _rfm_df, method=method, winsorize_pct=winsorize_pct,
         extra_features=extra_features)
     elbow = find_optimal_k(scaled, k_range=range(k_start, k_end + 1))
-    return scaled, feature_names, scaler, transformed_df, elbow
+    return scaled, feature_names, scaler, transformed_df, elbow, pca_model
 
 
 @st.cache_data(show_spinner=False)
@@ -408,11 +408,11 @@ def cached_run_kmeans(_rfm_df, n_clusters, method, winsorize_pct, extra_features
                       winsorize_pct=winsorize_pct, extra_features=extra_features)
 
 
-@st.cache_data(show_spinner="正在对比三种特征工程方法...")
+@st.cache_data(show_spinner="正在对比四种特征工程方法...")
 def cached_compare_methods(_rfm_df, compare_k, winsorize_pct, extra_features):
-    """在同一 K 与特征集下动态计算三种方法的轮廓系数, 供对比表格使用 (避免硬编码)"""
+    """在同一 K 与特征集下动态计算四种方法的轮廓系数, 供对比表格使用 (避免硬编码)"""
     out = {}
-    for m in ['composite', 'rank', 'log']:
+    for m in ['composite', 'rank', 'log', 'pca']:
         try:
             r = run_kmeans(_rfm_df, n_clusters=compare_k, method=m,
                            winsorize_pct=winsorize_pct,
@@ -1101,18 +1101,21 @@ elif page == "🎯 K-Means 聚类":
         value=max(int(k_range_start) + 1, 10), step=1)
     cluster_method = st.sidebar.selectbox(
         "特征变换方法",
-        options=['composite', 'rank', 'log'],
+        options=['composite', 'pca', 'rank', 'log'],
         format_func=lambda x: {
-            'composite': '组合特征 2D (推荐)',
+            'composite': '组合特征 2D (默认)',
+            'pca': 'PCA 降维 2D (轮廓系数最高)',
             'rank': '百分位排名 3D',
             'log': '对数变换 3D',
         }[x],
-        help="组合特征: 构造 [R_rank, R_rank+F_rank+M_rank] 二维空间, 将 K-Means 从 3D 降到 2D, 在本数据集上轮廓系数最高 (注意: 两维包含共同的 R_rank, 存在正相关, 非严格正交)"
+        help="组合特征: 构造 [R_rank, R_rank+F_rank+M_rank] 二维空间 (两维共享 R_rank, 非严格正交); "
+             "PCA: 对全部输入特征做正交降维后取前 2 个主成分, 加扩展特征后轮廓系数最高"
     )
     winsorize_pct = st.sidebar.slider("Winsorize 截断 (上分位)", min_value=0.95, max_value=1.0,
                                        value=0.995, step=0.005, format="%.3f",
                                        help="将 F/M 超过该分位数的值截断，默认 0.995 (截断 top 0.5%)")
-    selected_k = st.sidebar.slider("聚类数量 K", min_value=2, max_value=15, value=5, step=1)
+    selected_k = st.sidebar.slider("聚类数量 K", min_value=2, max_value=15, value=4, step=1,
+                                   help="默认取 4 —— 与「第一步」里轮廓系数给出的推荐 K 一致")
     feature_set = st.sidebar.selectbox(
         "输入特征集",
         options=['rfm_ext', 'rfm_only'],
@@ -1126,7 +1129,7 @@ elif page == "🎯 K-Means 聚类":
     extra_features = ['AOV', 'N_products'] if feature_set == 'rfm_ext' else []
 
     # 特征准备 + 最优 K 搜索 (缓存)
-    scaled, feature_names, scaler, transformed_df, elbow_result = cached_prepare_and_elbow(
+    scaled, feature_names, scaler, transformed_df, elbow_result, pca_model = cached_prepare_and_elbow(
         rfm_df, cluster_method, winsorize_pct, k_range_start, k_range_end, extra_features)
 
     # 最优 K 分析
@@ -1182,53 +1185,63 @@ elif page == "🎯 K-Means 聚类":
             f"对判断客户整体健康度很有价值。但精细化营销 (差异化触达 / 挽留预算分配) 通常需要更细的粒度："
             f"在 K≥3 范围内曲线进入平台期 (推荐 K={rec_k}，轮廓系数 {rec_sil:.4f})，"
             f"肘部法则拐点也大致落在 4-5 区间。综合考虑**统计指标**与**业务分群惯例**，"
-            f"K=4-6 均合理，本项目取 **K=5** 对应经典的 RFM 五类业务分群 "
-            f"(重要价值 / 重要发展 / 重要保持 / 新客户 / 流失)。当前选择 **K = {selected_k}**。")
+            f"**K=4 是当前特征集下轮廓系数最高的选择** (K=5 比它低约 0.02)，故本项目默认取 K=4。"
+            f"当前选择 **K = {selected_k}**。")
 
-    with st.expander("🔬 三种方法对比 — 为什么推荐组合特征 2D？(点击展开)"):
+    with st.expander("🔬 四种方法对比 — 组合特征 / PCA / 百分位排名 / 对数变换 (点击展开)"):
         st.markdown("""
         **核心矛盾**: K-Means 依赖欧氏距离, 对 F/M 的极度右偏 (F 偏度 ~10, M 偏度 ~24) 与两者之间的中高度正相关 (r ≈ 0.65) 都很敏感。3 维空间里 F 与 M 传递高度相似的信息, 相当于把它们对距离的贡献隐式放大。
 
-        **三种方法对比**:
+        **四种方法对比**:
 
         | 方法 | 维度 | 特征构造 | 优点 | 局限 |
         |:---|:---:|---------|------|------|
-        | **组合特征** (本项目采用) | 2D | `[R_rank, R_rank+F_rank+M_rank]` | 降维到 2D 缓解维度灾难; 本数据集上轮廓系数最高 | 两维共享 `R_rank`, 存在正相关 (≈0.6), **非严格正交** |
+        | **PCA 降维** (轮廓系数最高) | 2D | `PCA([R,F,M,扩展特征] 的排名)` 取前 2 个主成分 | 两个主成分**天然正交**; 同时承载全部输入特征的信息 (前两维解释 82.1% 方差); 加扩展特征后轮廓系数最高 | 主成分是特征的线性组合, 不如"时效性/参与度"那样一眼可读 |
+        | **组合特征** (默认) | 2D | `[R_rank, R_rank+F_rank+M_rank]` | 降到 2D 且语义可读: 时效性 × 参与度; 仅 RFM 时轮廓系数最高 (0.4486) | 两维共享 `R_rank`, 存在正相关 (≈0.6), **非严格正交** |
         | 百分位排名 | 3D | `[R_rank, F_rank, M_rank]` | 三维语义清晰、无重复维度 | F/M 高度相关仍造成隐式加权, 分离度不如 2D |
         | 对数变换 | 3D | `[log(R), log(F), log(M)]` | 传统方法, 直观 | 右偏压缩效果有限, 簇重叠严重 |
 
-        **为什么选 composite 而不是 rank?**
+        **方法怎么选 (加扩展特征之后)**:
 
-        1. **降维带来的分离度提升**: 从 3D 降到 2D 后, K-Means 的样本密度显著上升, 距离度量不再受"多余维度稀释", 簇间分离度更好。
-        2. **合并 F/M 消除隐式加权**: `RFM_composite` 把 F 与 M 打包为一个"参与度"标量, 避免它们因高度相关而在欧氏距离中被重复计入。
-        3. **业务直觉**: 时效性 × 参与度 恰好构成经典的客户分群矩阵——近期活跃的高参与度客户 = 重要价值客户, 长期沉睡的低参与度客户 = 流失客户。
+        | 特征集 | PCA 降维 | 组合特征 | 百分位排名 | 对数变换 |
+        |:---|:---:|:---:|:---:|:---:|
+        | 仅 RFM | 0.4369 | **0.4486** | 0.3898 | 0.3326 |
+        | RFM + 扩展特征 (默认) | **0.3967** | 0.3034 | 0.2857 | 0.2750 |
 
-        **需要注意的取舍**: `R_rank` 同时是第 1 维和第 2 维的组成部分, 严格讲两维不正交, 相当于把 R 在距离中"算了两次"。这是本项目**用简单性换取可解释性**的自觉取舍——从数据表现看, 2D 分离度仍显著优于 3D rank 方法; 若追求严格正交, 可考虑 PCA 降维。
+        加扩展特征之前组合特征更高; 加之后 **PCA 明显最高** (0.3967, 比组合特征高 0.093)。原因是 PCA 把 5 个相关性不高的特征压成 2 个**正交**主成分, 而组合特征的 4 维里 `R_rank` 与 `RFM_composite` 仍然正相关。**两者各有取舍**: PCA 数值最好但主成分含义要解释; 组合特征的"时效性 × 参与度"一眼可读。
 
-        **启用扩展特征后的变化 (重要)**: 侧边栏切到「RFM + 扩展特征」时, 上表的「维度」列变成 4 / 5 / 5, 两个新特征各追加一维。composite 的「降到 2D」优势此时不再成立, 但把 F/M 合并为「参与度」标量的动机不变 (F 与 M 仍中高度相关)。另一个必须知道的点: **加入弱相关的新维度会让轮廓系数下降**, 这是维度升高时的系统性现象, 不同维度数之间的轮廓系数不可直接比大小 —— 判断加特征是否有价值, 要看聚类画像里新维度在各簇之间是否真被拉开了差距 (见下方画像表的「平均客单价」「平均品类广度」两列)。
+        **注意 composite 的短板**: `R_rank` 同时是第 1 维和第 2 维的组成部分, 严格讲两维不正交 (相关约 0.6), 相当于把 R 在距离中"算了两次"。**这正是 PCA 方法存在的意义** —— 它给出的是两个严格正交的主成分, 若被追问"你的两维正交吗", 可以答"组合特征不正交, 所以我们也提供了 PCA 方案 (轮廓系数更高)"。
 
-        **4 步优化流程 (三种方法共用)**:
+        **启用扩展特征后的变化 (重要)**: 侧边栏切到「RFM + 扩展特征」时, 组合特征/百分位排名/对数变换的「维度」列变成 4 / 5 / 5, 两个新特征各追加一维 (PCA 固定输出 2 维)。**加入弱相关的新维度会让轮廓系数下降**, 这是维度升高时的系统性现象, 不同维度数之间的轮廓系数不可直接比大小 —— 判断加特征是否有价值, 要看聚类画像里新维度在各簇之间是否真被拉开了差距 (见下方画像表的「平均客单价」「平均品类广度」两列)。
+
+        **4 步优化流程 (四种方法共用)**:
         1. **Winsorizing**: 截断 F/M 的 top 0.5% 极端值
         2. **百分位排名**: `rank(pct=True)` 压缩到 0~1
         3. **StandardScaler**: Z-score 标准化
-        4. **K-Means**: `n_init=50, max_iter=500` 避免局部最优
+        4. **K-Means**: `n_init=10, max_iter=500` (n_init 取 sklearn 默认值 —— 本数据上 10 与 50 的簇划分几乎一致, 但 K 扫描快近一倍)
+
+        > PCA 方法的前 3 步相同, 第 4 步前多一道 `PCA(n_components=2)`: 对标准化后的排名矩阵取前 2 个主成分作为聚类空间 (刻意不再二次标准化 —— 主成分按方差降序排列, PC1 的信息本就最多)。
         """)
 
         st.markdown(f"**📊 实时对比 (K={selected_k}, Winsorize={winsorize_pct:.3f}, "
                     f"特征集={'RFM + 扩展' if extra_features else '仅 RFM'})**:")
         _cmp = cached_compare_methods(rfm_df, selected_k, winsorize_pct, extra_features)
-        _method_labels = {'composite': '组合特征 2D', 'rank': '百分位排名 3D', 'log': '对数变换 3D'}
+        _method_labels = {'composite': '组合特征 2D', 'pca': 'PCA 降维 2D',
+                          'rank': '百分位排名 3D', 'log': '对数变换 3D'}
         _cmp_rows = []
-        for _m in ['composite', 'rank', 'log']:
+        for _m in ['composite', 'pca', 'rank', 'log']:
             _v = _cmp[_m]
             _cmp_rows.append({
                 '方法': _method_labels[_m],
                 '维度': _v['dims'],
                 '轮廓系数': f"{_v['silhouette']:.4f}" if _v.get('ok') else '计算失败',
-                '是否本项目首选': '⭐' if _m == 'composite' else '',
+                '说明': {'composite': '默认 (语义可读)', 'pca': '轮廓系数最高',
+                         'rank': '', 'log': '传统方法'}[_m],
             })
         st.dataframe(pd.DataFrame(_cmp_rows), width='stretch', hide_index=True)
-        st.caption("💡 上表数值随侧边栏 K 与 Winsorize 参数实时变化, 非固定参考值。")
+        st.caption("💡 上表数值随侧边栏 K、Winsorize 与输入特征集实时变化, 非固定参考值。"
+                   "加入扩展特征后 PCA 通常最高 —— 它把多个弱相关特征压成 2 个正交主成分; "
+                   "而只用 RFM 时组合特征更高。两个数值不可跨维度直接比较。")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -1250,8 +1263,9 @@ elif page == "🎯 K-Means 聚类":
         st.metric("输入维度", f"{len(feature_names)} 维",
                   help=f"特征集: {'RFM + 扩展特征' if extra_features else '仅 RFM'}；扩展特征为 AOV 与品类广度")
     with col5:
-        method_labels = {'composite': '组合特征', 'rank': '百分位排名', 'log': '对数变换'}
-        st.metric("变换方法", method_labels[cluster_method], help="n_init=50, max_iter=500")
+        method_labels = {'composite': '组合特征', 'pca': 'PCA 降维',
+                         'rank': '百分位排名', 'log': '对数变换'}
+        st.metric("变换方法", method_labels[cluster_method], help="K-Means: n_init=10, max_iter=500")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -1339,6 +1353,7 @@ elif page == "🎯 K-Means 聚类":
         'R_rank': 'R-时效性 (排名)', 'RFM_composite': 'RFM-参与度 (综合排名)',
         'AOV_rank': 'AOV-平均客单价 (排名)', 'N_products_rank': '品类广度 (排名)',
         'Recency': 'R (最近购买)', 'Frequency': 'F (购买频率)', 'Monetary': 'M (消费金额)',
+        'PC1': 'PC1 第一主成分', 'PC2': 'PC2 第二主成分',
     }
     if cluster_method == 'log':
         _axis_names.update({'Recency': 'log(R)', 'Frequency': 'log(F)', 'Monetary': 'log(M)'})
@@ -1378,6 +1393,20 @@ elif page == "🎯 K-Means 聚类":
                          title=f"聚类特征空间散点图 (支持框选交互){_dim_note}")
     selection = st.plotly_chart(fig_2d, width='stretch', selection_mode="points",
                                 on_select="rerun", key="scatter_2d")
+    if cluster_method == 'pca' and pca_model is not None:
+        # 主成分是特征的线性组合, 观众看不出轴的含义, 这里把解释方差与载荷直接标出来
+        _evr = pca_model.explained_variance_ratio_ * 100
+        _load = pca_model.components_
+        _base_cols = (['R-时效性', 'F-购买频率', 'M-消费金额']
+                      + [EXTENDED_FEATURE_INFO[k]['name'] for k in extra_features
+                         if k in EXTENDED_FEATURE_INFO])
+        _p1 = '、'.join(f"{_base_cols[_i]} {_load[0][_i]:+.2f}" for _i in range(len(_base_cols)))
+        _p2 = '、'.join(f"{_base_cols[_i]} {_load[1][_i]:+.2f}" for _i in range(len(_base_cols)))
+        st.caption(f"💡 **怎么看这两个轴 (PCA 方法专属)**: 两个主成分是**输入的线性组合**, 累计解释 "
+                   f"**{_evr[:2].sum():.1f}%** 的方差 (PC1 {_evr[0]:.1f}% + PC2 {_evr[1]:.1f}%)。"
+                   f"载荷: **PC1** = {_p1} (系数全为正 → 越往右整体价值越高); "
+                   f"**PC2** = {_p2} (正负系数形成对比轴)。"
+                   f"PC1 与 PC2 **严格正交**, 所以横纵轴之间没有信息重叠。")
 
     # 展示框选客户详情
     sel_events = selection.get('selection', {}).get('points', [])
@@ -1509,6 +1538,7 @@ elif page == "🎯 K-Means 聚类":
         'Recency': 'R-最近购买', 'Frequency': 'F-购买频率', 'Monetary': 'M-消费金额',
         'R_rank': 'R-最近购买 (排名)', 'RFM_composite': 'RFM 综合参与度',
         'AOV_rank': 'AOV-平均客单价 (排名)', 'N_products_rank': '品类广度 (排名)',
+        'PC1': 'PC1 第一主成分', 'PC2': 'PC2 第二主成分',
     }
     centers.columns = [col_map.get(c, c) for c in centers.columns]
 

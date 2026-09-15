@@ -1,16 +1,23 @@
 """
 K-Means Customer Segmentation Module (V3 - Feature-Engineered)
 
-Three methods available:
-  - 'composite' (recommended): 2D features — R_rank + RFM_composite
-    Combines correlated F/M into one engagement dimension, reduces redundancy.
-    K=5 silhouette ≈ 0.42, K=4 ≈ 0.45.
+Four methods available (K=4 时的轮廓系数, 仅 RFM / 加扩展特征):
+  - 'composite': 2D features — R_rank + RFM_composite
+    Combines correlated F/M into one engagement dimension.  0.4486 / 0.3034
   - 'rank': 3D features — R_rank + F_rank + M_rank (with Winsorizing)
-    Standard percentile rank approach. K=5 silhouette ≈ 0.36.
+    Standard percentile rank approach.                     0.3898 / 0.2857
   - 'log': 3D features — log1p(R) + log1p(F) + log1p(M)
-    Legacy log-transform. K=5 silhouette ≈ 0.32.
+    Legacy log-transform.                                  0.3326 / 0.2750
+  - 'pca': 2D features — 对全部输入特征 (rank 口径) 标准化后取前 2 个主成分
+    两个主成分**天然正交** (composite 的两维相关约 0.6, 并不正交), 且同时承载全部
+    输入特征的信息 (前两主成分解释 82.1% 方差, 仅 RFM 时 94.3%)。
+    加入扩展特征后该方法的轮廓系数最高:                0.4369 / 0.3967
 
-All methods use StandardScaler + K-Means with n_init=50, max_iter=500.
+All methods use StandardScaler + K-Means with n_init=10, max_iter=500.
+
+n_init 取值说明: sklearn 默认为 10。曾用 50, 实测在这份 4,295 x 2~5 维、已标准化的平滑
+特征空间上, n_init=10 与 50 给出的簇划分几乎一致 (K 扫描的轮廓系数仅第 4 位小数有
+±0.003 的差异, 推荐 K 不变), 但 K 扫描耗时从 4.5s 降到约 2.6s —— 故采用 10。
 
 可选的 extra_features (如 ['AOV', 'N_products']) 会以百分位排名追加到上述维度之后,
 只在 R/F/M 之外增加输入维度, 不改动三种方法原有的 R/F/M 处理路径。
@@ -19,28 +26,33 @@ import pandas as pd
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score, silhouette_samples
 
 
 def prepare_features(rfm_df: pd.DataFrame, method: str = 'composite',
                      winsorize_pct: float = 0.995,
-                     extra_features: list = None) -> tuple:
+                     extra_features: list = None,
+                     random_state: int = 42) -> tuple:
     """
     Prepare features for K-Means clustering.
 
     Parameters:
         rfm_df: DataFrame with Recency, Frequency, Monetary columns
-        method: 'composite' (recommended 2D), 'rank' (3D), or 'log' (3D legacy)
+        method: 'composite' (recommended 2D), 'rank' (3D), 'log' (3D legacy),
+                或 'pca' (对全部输入特征做正交降维后取前 2 个主成分)
         winsorize_pct: upper clip percentile for Winsorizing (default 0.995 = top 0.5%)
         extra_features: 额外纳入聚类的非 RFM 客户特征列名 (如 ['AOV', 'N_products']),
                         须已存在于 rfm_df。它们只在 R/F/M 之外**增加维度**, 不改动
                         三种方法原有的 R/F/M 处理路径; 统一走百分位排名 —— rank 只看
                         次序、天然抗离群 (AOV 偏度 11.6 也无需再截断), 且无量纲,
                         不会因量级差异压过其他维度
+        random_state: 随机种子 (仅 PCA 方法用到; 本例数据量下 PCA 走完全 SVD, 结果确定)
 
     Returns:
-        (scaled_features, feature_names, scaler, transformed_df)
-        transformed_df contains the intermediate feature values for debugging
+        (scaled_features, feature_names, scaler, transformed_df, pca_model)
+        transformed_df contains the intermediate feature values for debugging;
+        pca_model 仅 method='pca' 时为拟合好的 PCA 对象, 其余方法为 None
     """
     extra_features = list(extra_features or [])
     _missing = [c for c in extra_features if c not in rfm_df.columns]
@@ -101,14 +113,37 @@ def prepare_features(rfm_df: pd.DataFrame, method: str = 'composite',
         features = np.column_stack([base] + [df[c].values for c in extra_cols])
         transformed = pd.DataFrame(features, columns=feature_names)
 
+    elif method == 'pca':
+        # === PCA method (2D): 对全部输入特征做正交降维 ===
+        # 输入取 rank 口径 (R/F/M 排名 + 扩展特征排名), 再取标准化的前 2 个主成分作为聚类空间。
+        # 与 composite 的区别: composite 的两维共享 R_rank、相关约 0.6 并不正交; PCA 的两个主成分
+        # 天然正交, 且能同时承载全部输入特征的信息 (实测前两主成分解释 82.1% 方差, 仅 RFM 时为 94.3%)。
+        # 刻意不在 PCA 之后再标准化: 主成分按方差降序排列, PC1 承载的信息本就最多,
+        # 强行拉平会丢掉这个权重 (实测不拉平的轮廓系数更高)。
+        df['R_inv'] = -df['Recency']
+        df['R_rank'] = df['R_inv'].rank(pct=True)
+        df['F_rank'] = df['Frequency'].rank(pct=True)
+        df['M_rank'] = df['Monetary'].rank(pct=True)
+
+        scaler = StandardScaler()
+        base_scaled = scaler.fit_transform(
+            df[['R_rank', 'F_rank', 'M_rank'] + extra_cols].values)
+        pca_model = PCA(n_components=2, random_state=random_state)
+        pcs = pca_model.fit_transform(base_scaled)
+
+        feature_names = ['PC1', 'PC2']
+        return (pcs, feature_names, scaler,
+                pd.DataFrame(pcs, columns=feature_names), pca_model)
+
     else:
-        raise ValueError(f"Unknown method: {method}. Use 'composite', 'rank', or 'log'.")
+        raise ValueError(
+            f"Unknown method: {method}. Use 'composite', 'rank', 'log', or 'pca'.")
 
     # StandardScaler for all methods
     scaler = StandardScaler()
     scaled = scaler.fit_transform(features)
 
-    return scaled, feature_names, scaler, transformed
+    return scaled, feature_names, scaler, transformed, None
 
 
 def find_optimal_k(features, k_range: range = range(2, 11), random_state: int = 42) -> dict:
@@ -124,7 +159,7 @@ def find_optimal_k(features, k_range: range = range(2, 11), random_state: int = 
 
     for k in k_values:
         km = KMeans(n_clusters=k, random_state=random_state,
-                    n_init=50, max_iter=500)
+                    n_init=10, max_iter=500)
         labels = km.fit_predict(features)
         inertia.append(km.inertia_)
         sil_scores.append(silhouette_score(features, labels))
@@ -168,13 +203,13 @@ def run_kmeans(rfm_df: pd.DataFrame, n_clusters: int = 5,
         - 'cluster_profile': DataFrame with per-cluster RFM means
         - 'method': the method used ('rank' or 'log')
     """
-    scaled, feature_names, scaler, transformed = prepare_features(
+    scaled, feature_names, scaler, transformed, pca_model = prepare_features(
         rfm_df, method=method, winsorize_pct=winsorize_pct,
         extra_features=extra_features)
 
-    # === Step 4: K-Means with aggressive tuning ===
+    # === Step 4: K-Means ===
     km = KMeans(n_clusters=n_clusters, random_state=random_state,
-                n_init=50, max_iter=500)
+                n_init=10, max_iter=500)
     labels = km.fit_predict(scaled)
 
     clustered = rfm_df.copy()
@@ -213,6 +248,7 @@ def run_kmeans(rfm_df: pd.DataFrame, n_clusters: int = 5,
         'clustered_df': clustered,
         'model': km,
         'scaler': scaler,
+        'pca': pca_model,
         'scaled_features': scaled,
         'silhouette_score': round(sil_score, 4),
         'silhouette_per_cluster': sil_per_cluster,
