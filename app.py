@@ -1317,15 +1317,18 @@ elif page == "🎯 K-Means 聚类":
         ))
 
     fig_3d.update_layout(**CHART_LAYOUT, height=680)
+    # F/M 极度右偏 (F 中位数 2 而 99 分位 31; M 中位数 $690 而 99 分位 $19,734), 线性刻度下
+    # 九成客户会挤进坐标轴前 10% 的角落 —— 这两轴改用对数刻度, 刻度值仍是原始单位。
+    # 对数轴不能从 0 起, 故 F/M 不再显式设 range, 由 Plotly 按数据自适应。
     fig_3d.update_layout(
         margin=dict(l=10, r=10, t=30, b=10),
         scene=dict(
             xaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
                        title='R-最近购买 (天)', range=[0, _cap['Recency']]),
             yaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
-                       title='F-购买频率', range=[0, _cap['Frequency']]),
+                       title='F-购买频率 (对数刻度)', type='log'),
             zaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
-                       title='M-消费金额 (美元)', range=[0, _cap['Monetary']]),
+                       title='M-消费金额 (美元, 对数刻度)', type='log'),
             bgcolor='white',
             aspectmode='manual',
             aspectratio=dict(x=1.35, y=1.35, z=1.0),
@@ -1335,7 +1338,14 @@ elif page == "🎯 K-Means 聚类":
                     font=dict(size=15), itemsizing='constant'),
     )
     st.plotly_chart(fig_3d, width='stretch')
-    st.caption("💡 **可视化说明**: 为防止极端离群值 (如个别客户 Monetary 高达数十万) 把主云团压成一小团, 三个坐标轴均截断至 **99 分位**。因此图中显示的菱形群中心是\"截断后坐标空间\"的均值, 与下方\"聚类画像\"表中未截断的原始真实群均值可能存在少量差异, 属于合理的可视化取舍。如需精确数值, 请以下方画像表与热力图为准。")
+    st.caption("💡 **可视化说明**: 为防止极端离群值 (如个别客户 Monetary 高达数十万) 把主云团压成一小团, "
+               "三个坐标轴均截断至 **99 分位** (F 至 31 次、M 至 $19,734)。"
+               "另外 F/M 偏度极大 —— 90% 的客户 F 不超过 9 次、M 不超过 $3,734, "
+               "线性刻度下这九成样本只能挤在坐标平面约 **6%** 的角落面积里, 簇与簇必然糊成一片, "
+               "因此 **F 与 M 两轴改用对数刻度**: 刻度值仍是原始的 次数 / 美元, 只是间距按数量级拉开, "
+               "让稀疏的高频高消费客户不再被压缩到看不见。"
+               "菱形群中心是截断后坐标空间的均值, 与下方聚类画像表中未截断的原始真实群均值可能存在少量差异, "
+               "属于合理的可视化取舍。如需精确数值, 请以下方画像表与热力图为准。")
 
     # 2D 特征空间散点图 (聚类实际发生的空间)
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
