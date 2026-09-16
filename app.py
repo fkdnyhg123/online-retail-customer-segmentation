@@ -1279,10 +1279,26 @@ elif page == "🎯 K-Means 聚类":
     _all_opts = [f"C{c}: {labels[c]['name']}" for c in _cids]
     _def_opt = next((o for o in _all_opts if '重要价值' in o), _all_opts[0])
 
-    # 各轴截断到 99 分位, 防止极端离群值把主云团压成一小团
-    _cap = {c: float(plot_df[c].quantile(0.99)) for c in ['Recency', 'Frequency', 'Monetary']}
-    for _c in _cap:
-        plot_df[_c] = plot_df[_c].clip(upper=_cap[_c])
+    # 各维度在界面上的中文名 (log 方法的 R/F/M 三列存的是 log1p 后的值)
+    _axis_names = {
+        'R_rank': 'R-时效性 (排名)', 'RFM_composite': 'RFM-参与度 (综合排名)',
+        'AOV_rank': 'AOV-平均客单价 (排名)', 'N_products_rank': '品类广度 (排名)',
+        'Recency': 'R (最近购买)', 'Frequency': 'F (购买频率)', 'Monetary': 'M (消费金额)',
+        'PC1': 'PC1 第一主成分', 'PC2': 'PC2 第二主成分',
+    }
+    if cluster_method == 'log':
+        _axis_names.update({'Recency': 'log(R)', 'Frequency': 'log(F)', 'Monetary': 'log(M)'})
+
+    # 坐标轴 = 聚类实际使用的两个维度 (横/纵) + M-消费金额排名 (竖)。
+    # 不用原始 R/F/M 的原因: 那套轴里 F 与 M 的相关系数高达 0.82 (同一信息画了两遍),
+    # 且 F/M 极度右偏, 实测把同一套聚类标签放进该坐标空间算轮廓系数只有 0.155 ——
+    # 图上四个群糊成一团; 换成"聚类空间 + 金额排名"后升到 0.361 (仅 RFM 配置 0.215 → 0.391)。
+    plot_df = plot_df.reset_index(drop=True)
+    _d3 = transformed_df.reset_index(drop=True)
+    _ax1, _ax2 = feature_names[0], feature_names[1]
+    plot_df[_ax1] = _d3[_ax1].values
+    plot_df[_ax2] = _d3[_ax2].values
+    plot_df['M_rank'] = plot_df['Monetary'].rank(pct=True)
 
     # 每个客户群一条 trace (点 + 该群中心菱形/群名), 底部图例点击即可显示/隐藏;
     # 默认仅显示一个群, 其余 legendonly (点了才显示); 图例切换为浏览器端操作, 不重跑后端
@@ -1291,61 +1307,63 @@ elif page == "🎯 K-Means 聚类":
         _opt = _all_opts[_i]
         _sub = plot_df[plot_df['Cluster'] == _cid]
         _n = len(_sub)
-        _cx = float(_sub['Recency'].mean())
-        _cy = float(_sub['Frequency'].mean())
-        _cz = float(_sub['Monetary'].mean())
+        _cx = float(_sub[_ax1].mean())
+        _cy = float(_sub[_ax2].mean())
+        _cz = float(_sub['M_rank'].mean())
         fig_3d.add_trace(go.Scatter3d(
-            x=list(_sub['Recency']) + [_cx],
-            y=list(_sub['Frequency']) + [_cy],
-            z=list(_sub['Monetary']) + [_cz],
+            x=list(_sub[_ax1]) + [_cx],
+            y=list(_sub[_ax2]) + [_cy],
+            z=list(_sub['M_rank']) + [_cz],
             mode='markers+text',
             marker=dict(
                 size=[5] * _n + [14],
                 symbol=['circle'] * _n + ['diamond'],
                 color=COLORS['palette'][_i],
-                opacity=0.75,
+                opacity=0.7,
                 line=dict(width=0.5, color='white'),
             ),
             text=[''] * _n + [labels[_cid]['name']],
             textposition='top center',
             textfont=dict(size=16, color='#111827'),
-            customdata=[[str(v)] for v in _sub['Customer ID']] + [[labels[_cid]['name'] + ' (群中心)']],
-            hovertemplate='客户 %{customdata[0]}<br>R=%{x:.0f} 天 / F=%{y:.0f} 次 / M=%{z:,.0f} 美元<extra>' + _opt + '</extra>',
+            customdata=[[str(v), f"{r:.0f}", f"{f:.0f}", f"{m:,.0f}"]
+                        for v, r, f, m in zip(_sub['Customer ID'], _sub['Recency'],
+                                              _sub['Frequency'], _sub['Monetary'])]
+            + [[labels[_cid]['name'] + ' (群中心)', '-', '-', '-']],
+            hovertemplate=('客户 %{customdata[0]}<br>R=%{customdata[1]} 天 / '
+                           'F=%{customdata[2]} 次 / M=$%{customdata[3]}'
+                           '<extra>' + _opt + '</extra>'),
             name=_opt,
             showlegend=True,
             visible=True if _opt == _def_opt else 'legendonly',
         ))
 
     fig_3d.update_layout(**CHART_LAYOUT, height=680)
-    # F/M 极度右偏 (F 中位数 2 而 99 分位 31; M 中位数 $690 而 99 分位 $19,734), 线性刻度下
-    # 九成客户会挤进坐标轴前 10% 的角落 —— 这两轴改用对数刻度, 刻度值仍是原始单位。
-    # 对数轴不能从 0 起, 故 F/M 不再显式设 range, 由 Plotly 按数据自适应。
+    # 三轴都是排名口径 (R/F/M 排名 0~1、RFM 复合 0~3、主成分 ±4), 量纲已统一, 无需再截断离群值
     fig_3d.update_layout(
         margin=dict(l=10, r=10, t=30, b=10),
         scene=dict(
             xaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
-                       title='R-最近购买 (天)', range=[0, _cap['Recency']]),
+                       title=_axis_names.get(_ax1, _ax1)),
             yaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
-                       title='F-购买频率 (对数刻度)', type='log'),
+                       title=_axis_names.get(_ax2, _ax2)),
             zaxis=dict(backgroundcolor='#fafbfc', gridcolor='#e5e7eb',
-                       title='M-消费金额 (美元, 对数刻度)', type='log'),
+                       title='M-消费金额 (排名 0~1)'),
             bgcolor='white',
             aspectmode='manual',
-            aspectratio=dict(x=1.35, y=1.35, z=1.0),
+            aspectratio=dict(x=1.2, y=1.2, z=1.0),
             camera=dict(eye=dict(x=1.5, y=-1.5, z=0.8)),
         ),
         legend=dict(orientation='h', yanchor='top', y=-0.02, xanchor='center', x=0.5,
                     font=dict(size=15), itemsizing='constant'),
     )
     st.plotly_chart(fig_3d, width='stretch')
-    st.caption("💡 **可视化说明**: 为防止极端离群值 (如个别客户 Monetary 高达数十万) 把主云团压成一小团, "
-               "三个坐标轴均截断至 **99 分位** (F 至 31 次、M 至 $19,734)。"
-               "另外 F/M 偏度极大 —— 90% 的客户 F 不超过 9 次、M 不超过 $3,734, "
-               "线性刻度下这九成样本只能挤在坐标平面约 **6%** 的角落面积里, 簇与簇必然糊成一片, "
-               "因此 **F 与 M 两轴改用对数刻度**: 刻度值仍是原始的 次数 / 美元, 只是间距按数量级拉开, "
-               "让稀疏的高频高消费客户不再被压缩到看不见。"
-               "菱形群中心是截断后坐标空间的均值, 与下方聚类画像表中未截断的原始真实群均值可能存在少量差异, "
-               "属于合理的可视化取舍。如需精确数值, 请以下方画像表与热力图为准。")
+    st.caption(f"💡 **可视化说明**: 三个坐标轴 = **聚类实际使用的两个维度** (横轴 {_axis_names.get(_ax1, _ax1)}、"
+               f"纵轴 {_axis_names.get(_ax2, _ax2)}；PCA 配置下即下方 2D 图的同一空间) + **竖轴 M-消费金额排名** "
+               "(0 = 花费最低, 1 = 花费最高)。这样选轴是为了让各群真正分得开: 早期版本用的是原始 R/F/M 三轴, "
+               "但那套轴里 F 与 M 的相关系数高达 **0.82** (等于把同一信息画了两遍), 且 F/M 极度右偏 (90% 的客户 "
+               "F ≤ 9 次、M ≤ $3,734), 把同一套聚类标签放进该坐标空间重算轮廓系数只有 **0.155**, 视觉上就是四团糊在"
+               "一起; 换成当前这套坐标轴后升到 **0.361** (仅 RFM 配置同样从 0.215 升到 0.391)。鼠标悬浮仍会显示"
+               "该客户真实的 R 天数 / F 次数 / M 金额, 业务含义不丢。")
 
     # 2D 特征空间散点图 (聚类实际发生的空间)
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -1359,16 +1377,6 @@ elif page == "🎯 K-Means 聚类":
         if _col not in plot_2d.columns:
             plot_2d[_col] = _src[_col]
     plot_2d['聚类标签'] = plot_2d['Cluster'].map(lambda c: f"C{c}: {labels[c]['name']}")
-
-    # 各维度在界面上的中文名 (log 方法的 R/F/M 三列存的是 log1p 后的值)
-    _axis_names = {
-        'R_rank': 'R-时效性 (排名)', 'RFM_composite': 'RFM-参与度 (综合排名)',
-        'AOV_rank': 'AOV-平均客单价 (排名)', 'N_products_rank': '品类广度 (排名)',
-        'Recency': 'R (最近购买)', 'Frequency': 'F (购买频率)', 'Monetary': 'M (消费金额)',
-        'PC1': 'PC1 第一主成分', 'PC2': 'PC2 第二主成分',
-    }
-    if cluster_method == 'log':
-        _axis_names.update({'Recency': 'log(R)', 'Frequency': 'log(F)', 'Monetary': 'log(M)'})
 
     if len(feature_names) == 2:
         _fx, _fy = feature_names[0], feature_names[1]
