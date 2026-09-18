@@ -183,12 +183,25 @@ COLORS = {
     'warning': '#d97706',
     'danger': '#dc2626',
     'info': '#0891b2',
-    # 15 色与侧边栏 K 上限 (15) 对齐: 各聚类详情卡片按群序号直接取色 (card_colors[cluster_id]),
-    # 色数少于 K 会 IndexError
+    # 15 色与侧边栏 K 上限 (15) 对齐, 保证每个簇都有独立颜色;
+    # 取色处 (card_colors[cluster_id % len(card_colors)]) 带取模兜底, 色数不足时只会复用而不会报错
     'palette': ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626',
                 '#0891b2', '#c026d3', '#ea580c', '#0d9488', '#4f46e5',
                 '#65a30d', '#ec4899', '#991b1b', '#1e3a8a', '#6b7280'],
 }
+
+# 原始数据的 6 类质量问题 (中文名, quality_report 键名)。
+# 页面 1 的问题清单、质量饼图与「清洗后复检」表共用这一份定义, 避免两处各写一遍键名导致口径漂移。
+QUALITY_ITEM_KEYS = [
+    ("取消订单 (Cancelled)", 'cancelled_orders'),
+    ("缺失客户ID (Customer ID)", 'missing_customer_id'),
+    ("负数量 (Negative Qty)", 'negative_quantity'),
+    ("零/负价格 (Zero/Neg Price)", 'zero_neg_price'),
+    ("精确重复 (Duplicates)", 'exact_duplicates'),
+    ("非商品编码 (Non-product)", 'special_stockcodes'),
+]
+# 第 7 类只进清洗后复检表, 不进质量饼图 (饼图口径保持 6 类)
+QUALITY_EXTRA_KEYS = [("缺失描述 (Description)", 'missing_description')]
 
 CHART_LAYOUT = dict(
     paper_bgcolor='white',
@@ -580,14 +593,8 @@ if page == "📈 数据概览":
     col1, col2 = st.columns([1, 1])
 
     with col1:
-        quality_items = [
-            ("取消订单 (Cancelled)", quality_report['cancelled_orders'], quality_report['cancelled_orders_pct']),
-            ("缺失客户ID (Customer ID)", quality_report['missing_customer_id'], quality_report['missing_customer_id_pct']),
-            ("负数量 (Negative Qty)", quality_report['negative_quantity'], quality_report['negative_quantity_pct']),
-            ("零/负价格 (Zero/Neg Price)", quality_report['zero_neg_price'], quality_report['zero_neg_price_pct']),
-            ("精确重复 (Duplicates)", quality_report['exact_duplicates'], quality_report['exact_duplicates_pct']),
-            ("非商品编码 (Non-product)", quality_report['special_stockcodes'], quality_report['special_stockcodes_pct']),
-        ]
+        quality_items = [(label, quality_report[key], quality_report[f'{key}_pct'])
+                         for label, key in QUALITY_ITEM_KEYS]
         for label, count, pct in quality_items:
             st.markdown(f"**{label}**: {count:,} 条 ({pct}%)")
 
@@ -690,12 +697,28 @@ if page == "📈 数据概览":
                 "不变"],
     })
     st.dataframe(_cmp_table, width='stretch', hide_index=True)
+    # 「清洗前平均数量」用全部行、「清洗前平均单价」只统计 Price > 0 的行, 两行口径不同, 必须标出来
+    _avg_price_all_rows = raw_df['Price'].mean()
+    st.caption(f"💡 **口径说明**: 「清洗前平均数量」统计全部 {len(raw_df):,} 行; "
+               f"「清洗前平均单价」只统计 Price > 0 的行 (剔除 {quality_report['zero_neg_price']:,} 条零/负价格), "
+               f"因此是 ${_avg_price_before:.2f} 而不是全部行的 ${_avg_price_all_rows:.2f}。"
+               "两行口径不同, 不能当成同一把尺子来比 —— 清洗后单价下降的主因是高价非商品行 (POST / BANK CHARGES) 被剔除。")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
     # ---- 清洗后数据质量报告 ----
     st.subheader("✅ 清洗后数据质量报告")
-    st.markdown("清洗后数据已无质量问题，可用于后续分析:")
+    # 把上方 6 类 + 缺失描述在清洗后的数据上原样重算一遍: 全部归零才写「无质量问题」, 不靠口头断言
+    _recheck_keys = QUALITY_ITEM_KEYS + QUALITY_EXTRA_KEYS
+    _recheck_df = pd.DataFrame({
+        '检查项': [label for label, _ in _recheck_keys],
+        '清洗前命中 (条)': [quality_report[key] for _, key in _recheck_keys],
+        '清洗后命中 (条)': [cleaned_quality[key] for _, key in _recheck_keys],
+    })
+    st.dataframe(_recheck_df, width='stretch', hide_index=True)
+    st.caption(f"💡 **解读**: 7 项检查在清洗后的 {cleaning_summary['cleaned_rows']:,} 条记录上全部归零, "
+               "说明清洗规则确实把每一类问题都清掉了, 而不是只清了占比大的那几类。")
+
     col_c1, col_c2, col_c3 = st.columns(3)
     with col_c1:
         st.metric("客户数 (Customer ID)", f"{cleaning_summary['unique_customers']:,} 人")
@@ -787,14 +810,15 @@ elif page == "🔍 数据探索":
 
     # ---- 字段值分布 (方案C: 分段统计图) ----
     st.subheader("📊 字段值分布")
-    st.caption("按业务含义分段统计，直观展示各区间订单数量与占比。")
+    st.caption("按业务含义分段统计，直观展示各区间**交易行数**与占比 (一行 = 发票里的一个商品明细行，"
+               "不是张发票；每张发票通常包含多行不同商品)。")
 
     dist_stats = compute_distribution_stats(explore_df)
 
     _seg_configs = {
-        'Quantity': {'title': '订单数量分布', 'xaxis_title': '购买数量',
+        'Quantity': {'title': '每行购买数量分布 (按交易行数)', 'xaxis_title': '购买数量',
                      'color': COLORS['primary'], 'icon': '📦'},
-        'Price':    {'title': '单价分布', 'xaxis_title': '单价 (美元 $)',
+        'Price':    {'title': '商品单价分布 (按交易行数)', 'xaxis_title': '单价 (美元 $)',
                      'color': COLORS['secondary'], 'icon': '💲'},
         'Revenue':  {'title': '单笔交易收入分布', 'xaxis_title': '收入 (美元 $)',
                      'color': COLORS['success'], 'icon': '💰'},
@@ -825,20 +849,20 @@ elif page == "🔍 数据探索":
                 x=info['labels'], y=info['counts'],
                 color=info['counts'],
                 color_continuous_scale=[cfg['color'] + '66', cfg['color']],
-                labels={'x': cfg['xaxis_title'], 'y': '订单数'},
+                labels={'x': cfg['xaxis_title'], 'y': '交易行数'},
             )
             # 在柱子上方标注百分比
             fig_seg.update_traces(
                 text=[f"{p}%" for p in info['pcts']],
                 textposition='outside',
                 textfont=dict(size=13, color='#333'),
-                hovertemplate=f'{cfg["xaxis_title"]}'+'=%{x}<br>订单数=%{y:,.0f}<br>占比=%{text}<extra></extra>'
+                hovertemplate=f'{cfg["xaxis_title"]}'+'=%{x}<br>交易行数=%{y:,.0f}<br>占比=%{text}<extra></extra>'
             )
             fig_seg.update_layout(
                 **CHART_LAYOUT, height=400, title=cfg['title'],
                 showlegend=False, coloraxis_showscale=False,
                 xaxis=dict(tickfont=dict(size=13)),
-                yaxis=dict(title='订单数'),
+                yaxis=dict(title='交易行数'),
             )
             st.plotly_chart(fig_seg, width='stretch')
 
@@ -1487,13 +1511,19 @@ elif page == "🎯 K-Means 聚类":
     fig_heat.update_layout(**CHART_LAYOUT, height=400,
                            xaxis_title='', yaxis_title='')
     st.plotly_chart(fig_heat, width='stretch')
-    _heat_tail = (" 当前特征集包含扩展特征, 因此热力图除 R/F/M 相关维度外还有 **AOV-平均客单价 (排名)** 与 "
-                  "**品类广度 (排名)** 两列 —— 它们在各个簇之间是否呈现明显的颜色差异, 就是这两个新特征"
-                  "究竟有没有真正参与分群的直接证据 (若各簇颜色几乎一样, 说明该维度对聚类没有贡献)。"
-                  if extra_features else
-                  " 组合特征方法将 R/F/M 压缩为 2 个可解释维度——**时效性 (R_rank)** 与 "
-                  "**综合参与度 (RFM_composite = R+F+M 排名之和)**; 两维共享 R 项, 存在正相关而非严格正交, "
-                  "属于用简单性换可解释性的自觉取舍 (详见「三种方法对比」展开)。")
+    if cluster_method == 'pca':
+        # PCA 下中心点只有两个主成分坐标, 不存在 AOV/品类广度这类原始列, 尾注必须跟屏幕上的列一致
+        _heat_tail = (" 默认配置下聚类发生在 PCA 的 **PC1 / PC2** 两个主成分上, 因此本图只有这两列 —— "
+                      "PC1 是「综合价值」轴 (R/F/M/AOV/品类广度 五项载荷全为正), PC2 是「客单价 vs 时效」对比轴。"
+                      "五个输入特征具体怎么合成这两个主成分, 见上方「特征空间 2D 可视化」里列出的解释方差与载荷。")
+    elif extra_features:
+        _heat_tail = (" 当前特征集包含扩展特征, 因此热力图除 R/F/M 相关维度外还有 **AOV-平均客单价 (排名)** 与 "
+                      "**品类广度 (排名)** 两列 —— 它们在各个簇之间是否呈现明显的颜色差异, 就是这两个新特征"
+                      "究竟有没有真正参与分群的直接证据 (若各簇颜色几乎一样, 说明该维度对聚类没有贡献)。")
+    else:
+        _heat_tail = (" 组合特征方法将 R/F/M 压缩为 2 个可解释维度——**时效性 (R_rank)** 与 "
+                      "**综合参与度 (RFM_composite = R+F+M 排名之和)**; 两维共享 R 项, 存在正相关而非严格正交, "
+                      "属于用简单性换可解释性的自觉取舍 (详见「三种方法对比」展开)。")
     st.caption("💡 **解读**: 热力图将聚类中心归一化到 0-1 区间，颜色越绿表示该维度得分越高。"
                "可快速识别每个簇的'强项'和'弱项'——例如重要价值客户在各维度上得分接近 1，而流失客户各维度均偏低。"
                + _heat_tail)
@@ -2042,6 +2072,13 @@ elif page == "📦 商品与国家调查":
     _country_show.columns = ['国家', '客户数', '收入 ($)', '收入占比%', '订单数',
                              '客单价 ($)', '复购率%', '商品种类数']
     st.dataframe(_country_show, width='stretch', hide_index=True)
+    # 每个国家的「客户数」是该国内唯一客户数, 跨多国下单的客户会在各国各计一次
+    _cust_col_sum = int(_country['客户数'].sum())
+    _unique_cust = cleaning_summary['unique_customers']
+    st.caption(f"💡 **口径提醒**: 「客户数」是每个国家内部的唯一客户数, 同一客户在两个国家都下过单会在两国各计一次, "
+               f"所以本列合计 {_cust_col_sum:,} 会略大于全站唯一客户数 {_unique_cust:,} "
+               f"(多出的 {_cust_col_sum - _unique_cust} 人次来自跨多国下单的客户, 不能把这一列直接求和当作客户总数)。"
+               f"需要客户总数请以上方「本土 vs 海外」表为准 —— 那张表按客户的**首个**国家二分, 每人只计一次。")
 
     st.markdown("#### 📈 收入 Top 5 国家的月度收入构成")
     _cm = cached_country_monthly(cleaned_df, 5)
