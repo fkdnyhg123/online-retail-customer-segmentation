@@ -701,7 +701,7 @@ if page == "📈 数据概览":
     _avg_price_all_rows = raw_df['Price'].mean()
     st.caption(f"💡 **口径说明**: 「清洗前平均数量」统计全部 {len(raw_df):,} 行; "
                f"「清洗前平均单价」只统计 Price > 0 的行 (剔除 {quality_report['zero_neg_price']:,} 条零/负价格), "
-               f"因此是 ${_avg_price_before:.2f} 而不是全部行的 ${_avg_price_all_rows:.2f}。"
+               f"即 \\${_avg_price_before:.2f} 而非全部行的 \\${_avg_price_all_rows:.2f}。"
                "两行口径不同, 不能当成同一把尺子来比 —— 清洗后单价下降的主因是高价非商品行 (POST / BANK CHARGES) 被剔除。")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -780,7 +780,6 @@ if page == "📈 数据概览":
 # ============================================================
 elif page == "🔍 数据探索":
     st.title("🔍 数据探索")
-    st.markdown("对清洗后的数据进行深入的分布分析和特征探索，发现数据模式和业务洞察。")
 
     # ---- 本页面时间筛选器 ----
     with st.expander("📅 时间范围筛选 (仅影响本页图表)", expanded=False):
@@ -810,8 +809,7 @@ elif page == "🔍 数据探索":
 
     # ---- 字段值分布 (方案C: 分段统计图) ----
     st.subheader("📊 字段值分布")
-    st.caption("按业务含义分段统计，直观展示各区间**交易行数**与占比 (一行 = 发票里的一个商品明细行，"
-               "不是张发票；每张发票通常包含多行不同商品)。")
+    st.caption("按业务含义分段统计各区间**交易行数**与占比 (一行 = 发票里的一个商品明细行，不是张发票)。")
 
     dist_stats = compute_distribution_stats(explore_df)
 
@@ -886,7 +884,7 @@ elif page == "🔍 数据探索":
                           yaxis={'categoryorder': 'total ascending'},
                           xaxis_title='总收入 (美元 $)')
     st.plotly_chart(fig_top, width='stretch')
-    st.caption("💡 **解读**: 热销商品以家居装饰和节日用品为主。排名靠前的商品 (如 WHITE HANGING HEART T-LIGHT HOLDER) 具有明显的爆款特征，收入远超其他商品。长尾分布表明少量头部商品贡献了大部分收入。")
+    st.caption("💡 **解读**: 热销商品以家居装饰和节日用品为主，排名靠前的 WHITE HANGING HEART T-LIGHT HOLDER 收入远超其余商品 —— 少量头部商品贡献了大部分收入。")
 
 # ============================================================
 # 页面 3: RFM 分析
@@ -944,8 +942,7 @@ elif page == "👥 客户特征分析":
     st.caption(f"💡 **解读**: R (最近购买间隔) 中位数 {_r_med_txt}，即超过半数客户在此间隔内有过购买。"
                f"F (购买频率) 以 {_f_dom} 档为主 ({_f_dom_pct}%)，M (消费金额) 以 {_m_dom} 档为主 ({_m_dom_pct}%)"
                f"——大多数客户为低频低消费群体，少量高频高消费客户拉高了均值。"
-               f"正因为这种强偏态，第 4 页聚类不直接对原始 R/F/M 建模，而改用百分位排名 (composite 组合特征)；"
-               f"对数变换的右偏压缩不够充分，实测效果反而最差，三种方法的对比见第 4 页「三种方法对比」展开。")
+               f"这种强偏态正是第 4 页不直接对原始 R/F/M 建模的原因。")
 
     # ---- 扩展客户特征 (非 RFM) ----
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -1030,7 +1027,7 @@ elif page == "👥 客户特征分析":
         st.plotly_chart(fig_corr, width='stretch')
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-    st.subheader("🔗 RFM 维度相关性")
+    st.subheader("🔗 R/F/M 两两散点")
     col1, col2 = st.columns(2)
     with col1:
         fig_rf = px.scatter(rfm_df, x='Frequency', y='Recency',
@@ -1050,7 +1047,7 @@ elif page == "👥 客户特征分析":
                              xaxis_title='购买频率 (次)', yaxis_title='消费金额 ($)', height=450)
         st.plotly_chart(fig_fm, width='stretch')
 
-    st.caption("💡 **解读**: 左图 (频率 vs 最近购买) 中气泡大小和颜色代表消费金额，可见高频客户 (右侧) 消费金额更高且购买更近期。右图 (频率 vs 消费金额) 显示频率和金额正相关，但少量极端客户 (右上角) 的消费金额远超其他客户，进一步验证了偏态分布。")
+    st.caption("💡 **解读**: 左图高频客户 (右侧) 消费金额更高且购买更近期；右图右上角的少量极端客户消费金额远超其余，偏态分布一目了然。")
 
     # RFM 分数分群
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -1122,8 +1119,7 @@ elif page == "👥 客户特征分析":
     _champ_n = int(_champ_mask.sum())
     _champ_ppl_pct = _champ_n / _seg_total * 100
     _champ_rev_pct = scored.loc[_champ_mask, 'Monetary'].sum() / scored['Monetary'].sum() * 100
-    st.caption(f"💡 **解读**: 使用分位数法将 R/F/M 各分为 1-5 档 (5 最高)，根据组合得分将客户归入不同价值分群。"
-               f"人数最多的两个分群为 {_top_segs_txt}。"
+    st.caption(f"💡 **解读**: 人数最多的两个分群为 {_top_segs_txt}。"
                f"**冠军客户** {_champ_n:,} 人 (占人数 {_champ_ppl_pct:.1f}%) 贡献了 {_champ_rev_pct:.1f}% 的收入——"
                f"人数占比与收入占比之间的差距，正是分群差异化运营的价值所在。")
 
@@ -1183,7 +1179,7 @@ elif page == "🎯 K-Means 聚类":
             xaxis_title='聚类数 K', yaxis_title='组内平方和 (WCSS)',
             height=400)
         st.plotly_chart(fig_elbow, width='stretch')
-        st.caption("💡 **肘部法则**: WCSS (组内平方和) 随 K 增大而下降，曲线拐点处为最优 K。拐点之后继续增加 K 收益递减。")
+        st.caption("💡 **肘部法则**: WCSS 随 K 增大单调下降，拐点处即最优 K。")
     with col2:
         fig_sil = go.Figure()
         fig_sil.add_trace(go.Scatter(
@@ -1205,22 +1201,19 @@ elif page == "🎯 K-Means 聚类":
             marker=dict(size=18, color=COLORS['warning'], symbol='star', line=dict(width=2, color='white')),
             text=[f'推荐 K={rec_k}'],
             textposition='top center',
-            name=f'推荐 K={rec_k} (K≥3 中轮廓系数最高: {rec_sil:.4f})'
+            name=f'推荐 K={rec_k}'
         ))
         fig_sil.update_layout(**CHART_LAYOUT,
             title="轮廓系数分析 (Silhouette Score)",
             xaxis_title='聚类数 K', yaxis_title='轮廓系数',
             height=400)
         st.plotly_chart(fig_sil, width='stretch')
-        st.caption("💡 **轮廓系数**: 衡量簇内紧密度和簇间分离度，取值 -1~1。越高表示簇内样本越紧密、不同簇之间分离越清晰。⭐ 标记为 K≥3 范围内的推荐 K (K=2 系数虽最高，对应粗粒度的\"活跃/沉睡\"二分，但对精细化营销而言粒度不足)。")
+        st.caption("💡 **轮廓系数**: 衡量簇内紧密度与簇间分离度，取值 -1~1，越高越好。⭐ 为 K≥3 范围内的推荐 K。")
 
     st.info(f"**K 值选择依据**: 轮廓系数在 K=2 处最高 ({elbow_result['best_silhouette']:.4f})，"
-            f"说明数据本身具有显著的\"活跃 vs 沉睡\"双峰结构——这是最有统计证据的一层分群，"
-            f"对判断客户整体健康度很有价值。但精细化营销 (差异化触达 / 挽留预算分配) 通常需要更细的粒度："
-            f"在 K≥3 范围内曲线进入平台期 (推荐 K={rec_k}，轮廓系数 {rec_sil:.4f})，"
-            f"肘部法则拐点也大致落在 4-5 区间。综合考虑**统计指标**与**业务分群惯例**，"
-            f"**K=4 是当前特征集下轮廓系数最高的选择** (K=5 比它低约 0.02)，故本项目默认取 K=4。"
-            f"当前选择 **K = {selected_k}**。")
+            f"但只对应粗粒度的\"活跃 vs 沉睡\"二分，营销粒度不足。"
+            f"K≥3 范围内 **K={rec_k} 最高 ({rec_sil:.4f})**，肘部拐点也落在 4-5 区间 (K=5 低约 0.02)。"
+            f"结合统计指标与业务分群惯例，本项目默认取 K=4。当前选择 **K = {selected_k}**。")
 
     with st.expander("🔬 两种特征变换方法 — 组合特征 vs PCA (点击展开)"):
         st.markdown("""
@@ -1268,8 +1261,7 @@ elif page == "🎯 K-Means 聚类":
             })
         st.dataframe(pd.DataFrame(_cmp_rows), width='stretch', hide_index=True)
         st.caption("💡 上表数值随侧边栏 K、Winsorize 与输入特征集实时变化, 非固定参考值。"
-                   "✅ 标出的是当前特征集自动配对的方法 (配对依据见上表)。"
-                   "注意两个数值不可跨维度直接比较 —— 组合特征是 2-4 维、PCA 固定 2 维。")
+                   "两个数值不可跨维度直接比较 —— 组合特征是 2-4 维、PCA 固定 2 维。")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -1284,7 +1276,7 @@ elif page == "🎯 K-Means 聚类":
     with col1:
         st.metric("聚类数量", f"{selected_k} 组")
     with col2:
-        st.metric("轮廓系数", f"{result['silhouette_score']:.4f}", help="取值范围 -1~1，越高越好")
+        st.metric("轮廓系数", f"{result['silhouette_score']:.4f}")
     with col3:
         st.metric("参与聚类客户", f"{len(clustered_df):,} 人")
     with col4:
@@ -1308,7 +1300,7 @@ elif page == "🎯 K-Means 聚类":
     # 2D 特征空间散点图 (聚类实际发生的空间)
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
     st.subheader("📍 特征空间 2D 可视化")
-    st.caption("下图展示聚类**实际使用的特征空间** (非原始 R/F/M)。支持框选 (lasso/box) 查看选中客户的详细信息。")
+    st.caption("聚类实际发生的特征空间 (非原始 R/F/M)，可框选查看选中客户明细。")
 
     plot_2d = transformed_df.reset_index(drop=True).copy()
     # transformed_df 仅含工程特征列, 需按行序从 clustered_df 补回 Cluster / Customer ID / 原始 R F M
@@ -1350,7 +1342,7 @@ elif page == "🎯 K-Means 聚类":
         labels={_fx: _xl, _fy: _yl},
     )
     fig_2d.update_layout(**CHART_LAYOUT, height=500,
-                         title=f"聚类特征空间散点图 (支持框选交互){_dim_note}")
+                         title=f"聚类特征空间散点图{_dim_note}")
     selection = st.plotly_chart(fig_2d, width='stretch', selection_mode="points",
                                 on_select="rerun", key="scatter_2d")
     if cluster_method == 'pca' and pca_model is not None:
@@ -1362,11 +1354,9 @@ elif page == "🎯 K-Means 聚类":
                          if k in EXTENDED_FEATURE_INFO])
         _p1 = '、'.join(f"{_base_cols[_i]} {_load[0][_i]:+.2f}" for _i in range(len(_base_cols)))
         _p2 = '、'.join(f"{_base_cols[_i]} {_load[1][_i]:+.2f}" for _i in range(len(_base_cols)))
-        st.caption(f"💡 **怎么看这两个轴 (PCA 方法专属)**: 两个主成分是**输入的线性组合**, 累计解释 "
-                   f"**{_evr[:2].sum():.1f}%** 的方差 (PC1 {_evr[0]:.1f}% + PC2 {_evr[1]:.1f}%)。"
-                   f"载荷: **PC1** = {_p1} (系数全为正 → 越往右整体价值越高); "
-                   f"**PC2** = {_p2} (正负系数形成对比轴)。"
-                   f"PC1 与 PC2 **严格正交**, 所以横纵轴之间没有信息重叠。")
+        st.caption(f"💡 **两轴怎么读**: 主成分是输入的线性组合, 累计解释 **{_evr[:2].sum():.1f}%** 方差 "
+                   f"(PC1 {_evr[0]:.1f}% + PC2 {_evr[1]:.1f}%)。"
+                   f"载荷: **PC1** = {_p1} (全为正 → 越往右整体价值越高); **PC2** = {_p2} (正负对比轴)。两轴严格正交。")
 
     # 展示框选客户详情
     sel_events = selection.get('selection', {}).get('points', [])
@@ -1440,7 +1430,7 @@ elif page == "🎯 K-Means 聚类":
             ),
         )
         st.plotly_chart(fig_radar, width='stretch')
-        st.caption("💡 **解读**: 雷达图面积越大代表该簇综合价值越高。重要价值客户簇在三个维度上均突出，覆盖面积最大。可直观对比各簇在 R/F/M 上的优劣势差异。")
+        st.caption("💡 **解读**: 雷达图面积越大代表该簇综合价值越高。重要价值客户簇在三个维度上均突出，覆盖面积最大。")
         st.caption("*R-最近购买: 值越高 = 购买越近期 (已反转)")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -1513,19 +1503,16 @@ elif page == "🎯 K-Means 聚类":
     st.plotly_chart(fig_heat, width='stretch')
     if cluster_method == 'pca':
         # PCA 下中心点只有两个主成分坐标, 不存在 AOV/品类广度这类原始列, 尾注必须跟屏幕上的列一致
-        _heat_tail = (" 默认配置下聚类发生在 PCA 的 **PC1 / PC2** 两个主成分上, 因此本图只有这两列 —— "
-                      "PC1 是「综合价值」轴 (R/F/M/AOV/品类广度 五项载荷全为正), PC2 是「客单价 vs 时效」对比轴。"
-                      "五个输入特征具体怎么合成这两个主成分, 见上方「特征空间 2D 可视化」里列出的解释方差与载荷。")
+        _heat_tail = (" 聚类发生在 **PC1 / PC2** 上, 故本图只有这两列 —— PC1 是「综合价值」轴 (五项载荷全为正), "
+                      "PC2 是「客单价 vs 时效」对比轴; 载荷明细见上方特征空间图。")
     elif extra_features:
-        _heat_tail = (" 当前特征集包含扩展特征, 因此热力图除 R/F/M 相关维度外还有 **AOV-平均客单价 (排名)** 与 "
-                      "**品类广度 (排名)** 两列 —— 它们在各个簇之间是否呈现明显的颜色差异, 就是这两个新特征"
-                      "究竟有没有真正参与分群的直接证据 (若各簇颜色几乎一样, 说明该维度对聚类没有贡献)。")
+        _heat_tail = (" 当前特征集含扩展特征, 故还有 **AOV-平均客单价 (排名)** 与 **品类广度 (排名)** 两列 —— "
+                      "两列在各簇之间是否有明显颜色差异, 就是它们真正参与分群的证据。")
     else:
-        _heat_tail = (" 组合特征方法将 R/F/M 压缩为 2 个可解释维度——**时效性 (R_rank)** 与 "
-                      "**综合参与度 (RFM_composite = R+F+M 排名之和)**; 两维共享 R 项, 存在正相关而非严格正交, "
-                      "属于用简单性换可解释性的自觉取舍 (详见「三种方法对比」展开)。")
-    st.caption("💡 **解读**: 热力图将聚类中心归一化到 0-1 区间，颜色越绿表示该维度得分越高。"
-               "可快速识别每个簇的'强项'和'弱项'——例如重要价值客户在各维度上得分接近 1，而流失客户各维度均偏低。"
+        _heat_tail = (" 组合特征把 R/F/M 压缩为 **时效性 (R_rank)** 与 **综合参与度 (R+F+M 排名之和)** 两列; "
+                      "两维共享 R 项、非严格正交 (详见「两种特征变换方法」展开)。")
+    st.caption("💡 **解读**: 聚类中心已归一化到 0-1，颜色越绿表示该维度得分越高 —— "
+               "重要价值客户各维度得分接近 1，流失客户各维度均偏低。"
                + _heat_tail)
 
 # ============================================================
@@ -1543,12 +1530,11 @@ elif page == "🔗 关联规则分析":
     assoc_min_support = st.sidebar.slider(
         "最小支持度 (min_support)", min_value=0.005, max_value=0.030,
         value=0.02, step=0.005, format="%.3f",
-        help="商品组合至少出现在多少比例的交易中。值越小规则越多但计算越慢。"
-             "量程由下方敏感性扫描确定: 上限 0.030 (再高则可用规则不足 10 条), 下限 0.005 (再低规则数爆炸且多为偶然组合)。")
+        help="商品组合至少出现在多少比例的交易中。值越小规则越多但计算越慢。量程由下方敏感性扫描确定。")
     assoc_min_confidence = st.sidebar.slider(
         "最小置信度 (min_confidence)", min_value=0.1, max_value=0.7,
         value=0.3, step=0.05, format="%.2f",
-        help="规则 A→B 中，买 A 的客户有多大比例也买了 B。量程由下方敏感性扫描确定: 超过 0.70 后规则数不足以支撑筛选。")
+        help="规则 A→B 中，买 A 的客户有多大比例也买了 B。量程由下方敏感性扫描确定。")
     assoc_top_items = st.sidebar.slider(
         "分析商品数 (Top-N)", min_value=50, max_value=300,
         value=100, step=10,
@@ -1592,8 +1578,7 @@ elif page == "🔗 关联规则分析":
 
     # --- 阈值敏感性分析: 支持度/置信度的量程是"扫出来"的, 不是随手定的 ---
     st.subheader("🎚️ 阈值范围如何确定 (敏感性扫描)")
-    st.caption("把支持度与置信度在全量程上做网格扫描, 看规则数随阈值如何变化, 再据此划定合理区间 —— "
-               "侧边栏两个滑块的量程就是这么来的。")
+    st.caption("把支持度与置信度做全量程网格扫描, 看规则数随阈值如何变化 —— 侧边栏两个滑块的量程即由此确定。")
 
     _sweep, _sup_info = cached_threshold_sweep(cleaned_df, assoc_top_items, len(cleaned_df))
     _sw1, _sw2 = st.columns(2)
@@ -1654,7 +1639,6 @@ elif page == "🔗 关联规则分析":
 只有 **{_max_pair_sup:.2%}** —— 阈值一旦超过它, 连最高频的那一对商品都进不了频繁项集, 必然一条规则都挖不出来
 ({_dead_txt} 以上正是这个死区)。作为对照, 最高频**单品**的支持度高达 {_max_item_sup:.1%}; 单品与商品对之间这么大的落差,
 说明这个数据集的商品共现其实相当分散 —— 这也解释了为什么零售购物篮分析的 min_support 通常都取得很低。
-原先滑块上界设到 0.10, 可调区间有一半以上是空的, 现已按扫描结果收到 {_sup_hi_txt}。
 
 **一个反直觉的现象**: 支持度越低规则越多, 而且**最高提升度反而更高**
 (本次扫描中 0.005 档最高 lift 达 {_sweep['最高提升度'].max():.1f}, 而当前参数下的最高 lift 为 {_cur_lift_txt})。
@@ -1749,7 +1733,7 @@ elif page == "🔗 关联规则分析":
                                   title="每条规则的支持度 vs 置信度 (气泡大小/颜色 = 提升度)")
         st.plotly_chart(fig_scatter, width='stretch')
         st.caption("💡 **解读**: 右上角的规则同时具有高支持度和高置信度，是最有价值的关联规则。"
-                   "颜色越亮 (提升度越高) 表示关联越强——提升度 > 1 说明两商品的出现不是偶然的，而是正相关。")
+                   "提升度 > 1 说明两商品的出现不是偶然的，而是正相关。")
 
         st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -1809,16 +1793,15 @@ elif page == "🔗 关联规则分析":
             ))
 
             fig_net.update_layout(**CHART_LAYOUT, height=600,
-                                  title="商品关联网络 (节点大小=关联数量，连线=两者存在关联规则)")
+                                  title="商品关联网络 (节点大小 = 关联规则数)")
             fig_net.update_layout(
                 xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                 yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
                 margin=dict(l=20, r=20, t=50, b=20))
             st.plotly_chart(fig_net, width='stretch')
-            st.caption("💡 **解读**: 每个节点是一种商品，连线表示两者之间存在关联规则。"
-                       "这里是无向展示: 强关联往往互为前项与后项 (如粉色↔蓝色餐具套装)，逐条规则的方向请看上方散点图与下方详情表的「前项 → 后项」。"
-                       "节点越大说明该商品参与的关联规则越多 (是「枢纽」商品)；鼠标悬停连线可查看该规则的提升度与置信度。"
-                       "可以识别出哪些商品经常被一起购买，用于捆绑销售或货架陈列优化。")
+            st.caption("💡 **解读**: 这里是无向展示: 强关联往往互为前项与后项 (如粉色↔蓝色餐具套装)，"
+                       "逐条规则的方向请看上方散点图与下方详情表的「前项 → 后项」。"
+                       "节点越大越是「枢纽」商品；鼠标悬停连线可查看该规则的提升度与置信度。")
         else:
             st.info("当前规则数量不足，无法生成网络图。")
 
@@ -1840,8 +1823,7 @@ elif page == "🔗 关联规则分析":
                                xaxis_tickangle=-45,
                                xaxis_title='', yaxis_title='')
         st.plotly_chart(fig_cooc, width='stretch')
-        st.caption("💡 **解读**: 颜色越深表示行商品出现时列商品也出现的概率越高。"
-                   "对角线始终为 1 (商品自身共现)。非对角线的高值区域揭示了强共购模式，"
+        st.caption("💡 **解读**: 对角线恒为 1 (商品自身共现)。非对角线的高值区域就是强共购模式，"
                    "可用于推荐系统和捆绑促销策略。")
 
         st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -1929,8 +1911,8 @@ elif page == "🔗 关联规则分析":
 elif page == "📦 商品与国家调查":
     st.title("📦 商品与国家调查")
     st.markdown("针对 **商品描述 (Description)** 与 **用户所在国家 (Country)** 两个特征的业务探索 —— "
-                "前者是文本字段，必须先拆成可解释的品类才能统计；后者分布高度集中，"
-                "直接当聚类特征几乎没有区分度，但拆成「本土 vs 海外」后价值差异很明显。")
+                "国家维度分布高度集中，直接当聚类特征几乎没有区分度，"
+                "但拆成「本土 vs 海外」后价值差异很明显。")
 
     # ===================== 一、商品描述 =====================
     st.subheader("🏷️ 商品描述 (Description) 分析")
@@ -1990,18 +1972,14 @@ elif page == "📦 商品与国家调查":
     _type_txt = '、'.join(f"**{_t}** {_n} 个"
                           for _t, _n in _words['词类'].value_counts().items())
     st.caption(f"💡 **解读**: 收入贡献最高的是 **{_top_word['关键词']}**（{_top_word['中文含义']}）——覆盖 "
-               f"{int(_top_word['商品数'])} 种商品、收入 ${_top_word['收入']:,.0f}、占全站 {_top_word['收入占比%']}%，"
-               f"可视为店铺的基本盘；平均单价最高的是 **{_hi_price_word['关键词']}**（{_hi_price_word['中文含义']}），"
-               f"约 ${_hi_price_word['平均单价']:.2f}/件。"
-               f"从词类构成看，这 {len(_words)} 个高频词里 {_type_txt}；更值得注意的是"
-               f"**颜色词在前五名里就占了 3 席**（RED / WHITE / PINK），说明顾客高度按「同一个商品的不同花色」选购 —— "
-               f"这与第 5 页关联规则里「同系列不同色商品互相强关联」的发现完全一致。"
-               f"右图（对数 X 轴）则把品类分出两类：右下角是**走量**型（覆盖商品多、总销量大），"
-               f"相对左上角是**量小价略高**型 —— 前者适合做曝光与凑单，后者更适合重点推荐与会员专享。")
+               f"{int(_top_word['商品数'])} 种商品、收入 \\${_top_word['收入']:,.0f}、占全站 {_top_word['收入占比%']}%；"
+               f"平均单价最高的是 **{_hi_price_word['关键词']}**（{_hi_price_word['中文含义']}），约 \\${_hi_price_word['平均单价']:.2f}/件。"
+               f"这 {len(_words)} 个高频词里 {_type_txt}，但**颜色词在前五名占了 3 席**（RED / WHITE / PINK）—— "
+               f"顾客高度按「同一个商品的不同花色」选购，与第 5 页关联规则的发现一致。"
+               f"右图（对数 X 轴）右下角是**走量**型、左上角是**量小价高**型：前者适合曝光与凑单，后者适合重点推荐。")
 
     st.caption("⚠️ **口径提醒**: `HOT` / `WATER` / `BOTTLE` 三个词其实来自同一个商品名 "
-               "`HOT WATER BOTTLE`（热水袋），`RETRO` / `SPOT` / `RETROSPOT` 也高度重叠 —— "
-               "同一件商品会命中多个词，所以表中各项**不能相加**，这也是前面强调口径的原因。")
+               "`HOT WATER BOTTLE`（热水袋），`RETRO` / `SPOT` / `RETROSPOT` 也高度重叠。")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -2059,10 +2037,9 @@ elif page == "📦 商品与国家调查":
         st.plotly_chart(fig_ov, width='stretch')
 
     st.caption(f"💡 **解读**: 英国以 {_uk_rev_share:.1f}% 的收入占比绝对主导, 但只看收入会漏掉一个事实 —— "
-               f"**海外客户人少、单体价值却明显更高**: 海外 {_ov_n:,} 人贡献了 {_ov_rev_share:.1f}% 的收入, "
-               f"平均消费 ${_ov_mon:,.0f} (英国 ${_uk_mon:,.0f})、平均客单价 ${_ov_aov:,.0f} (英国 ${_uk_aov:,.0f})。"
-               f"这与国家维度的另一个特点吻合: 海外多为**批发型小客户**, 人少但单笔金额大。"
-               f"对应到运营上, 本土适合做频次与复购, 海外更适合做客单价与批发阶梯价。")
+               f"**海外客户人少、单体价值更高**: 海外 {_ov_n:,} 人贡献了 {_ov_rev_share:.1f}% 的收入, "
+               f"平均消费 \\${_ov_mon:,.0f} vs 英国 \\${_uk_mon:,.0f}, 平均客单价 \\${_ov_aov:,.0f} vs \\${_uk_aov:,.0f}。"
+               f"本土适合做频次与复购, 海外适合做客单价与批发阶梯价。")
 
     st.markdown("#### 📋 国家明细 (按收入排序)")
     _cshow = st.selectbox("显示数量", options=[10, 15, 20, 30], index=1,
@@ -2094,6 +2071,5 @@ elif page == "📦 商品与国家调查":
                          legend=dict(orientation='h', yanchor='bottom', y=1.02,
                                      xanchor='center', x=0.5))
     st.plotly_chart(fig_cm, width='stretch')
-    st.caption("💡 **解读**: 面积图的整体形状与第 1 页的月度收入趋势一致 (11 月冲高、12 月是不完整月份), "
-               "但分层后可以看出海外市场的相对份额是否在上升 —— 若顶部几层 (海外国家) 的厚度随时间变厚, "
-               "说明海外业务的增速快于本土, 值得单独投入资源；反之则说明增长仍主要靠英国本土。")
+    st.caption("💡 **解读**: 整体形状与第 1 页的月度收入趋势一致 (11 月冲高、12 月为不完整月份); "
+               "分层后看的是海外几层的厚度是否随时间变厚 —— 变厚说明海外增速快于本土, 反之增长仍靠英国本土。")
