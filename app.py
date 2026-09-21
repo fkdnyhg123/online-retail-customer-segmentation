@@ -1027,7 +1027,7 @@ elif page == "👥 客户特征分析":
         st.plotly_chart(fig_corr, width='stretch')
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-    st.subheader("🔗 R/F/M 两两散点")
+    st.subheader("🔗 RFM 关系气泡图")
     col1, col2 = st.columns(2)
     with col1:
         fig_rf = px.scatter(rfm_df, x='Frequency', y='Recency',
