@@ -15,41 +15,47 @@ Category-level Association Rules Module (报告 6.2 节配套)
 import numpy as np
 import pandas as pd
 
-# (品类, [关键词...]) —— 自上而下, 首个命中即归类, 互斥
+# (品类, [关键词...]) —— 自上而下, 首个命中即归类, 互斥。
+# 顺序与词形都有讲究, 改之前先看这几条已踩过的坑:
+#   1) 词要用词干: BAKE 匹配不到 BAKING (动词变形掉 e), 得写 BAK;
+#   2) 子串陷阱: 'TIN' 会命中 BUNTING、'CHILD' 会把 CHILDS UMBRELLA 塞进玩具、
+#      'FAIRY' 会把 FAIRY CAKE 蛋糕纸杯塞进烛台 —— 所以 TIN 带空格、CHILD/KIDS 删掉、
+#      餐厨排在烛台前面、家居(伞/垫/毯)排在玩具前面;
+#   3) 家居保暖不放 BATH/WALL/BRUSH 这类宽词, 否则会截走玩具(BATH SPLASH)与文具(PAINT BRUSH)。
 CATEGORY_RULES = [
     ('首饰收纳盒', ['NECKLACE', 'BRACELET', 'EARRING', 'JEWELLERY', 'TRINKET',
                      'CHARM', 'PENDANT', 'COMPACT']),
     ('相框相册',   ['FRAME', 'PHOTO', 'PICTURE', 'ALBUM', 'RECORD COVER', 'CANVAS PRINT']),
     ('包袋',       ['BAG', 'POUCH', 'PURSE', 'SHOPPING', 'SHOPPER', 'CARRY ALL',
                      'NECESSAIRE', 'VANITY']),
-    ('烛台灯具',   ['T-LIGHT', 'TEALIGHT', 'CANDL', 'LANTERN', 'FAIRY', 'LAMP',
-                     'LIGHT', 'HURRICANE']),
+    ('家居保暖',   ['CUSHION', 'CUSHARE', 'BLANKET', 'FLANNEL', 'RUG', 'DOORMAT', 'DOOR MAT',
+                     'PARASOL', 'UMBRELLA', 'CURTAIN', 'PILLOW', 'CLOCK', 'COAT',
+                     'SHOE', 'SLIPPER', 'SOCK', 'SOMBRERO', 'SCARF', 'TOWEL',
+                     'HOT WATER', 'HAND WARMER', 'WOOLLY', 'HOTTIE', 'MIRROR', 'CUSH', 'MATCH']),
     ('餐厨烘焙',   ['CAKE', 'BAK', 'PLATE', 'CUP', 'MUG', 'BOWL', 'NAPKIN', 'CUTLER',
                      'COFFEE', 'TRAY', 'JUG', 'COASTER', 'PLACEMAT', 'TABLECLOTH',
                      'DISH', 'KITCHEN', 'CUTTING', 'FORK', 'SPOON', 'ESPRESSO',
-                     'TEAPOT', 'SUGAR', 'PORRINGER', 'CHOCOLATE', 'WINE', 'GIN',
+                     'TEAPOT', 'SUGAR', 'PORRINGER', 'CHOCOLATE', 'WINE', ' GIN ', 'GIN +',
                      'CHEESE', 'BREAD', 'SALT', 'PEPPER', 'DOIL', 'SERVING',
+                     'TEA GLASS', 'TABLE CLOTH',
                      'DRINK', 'APRON', 'TISSUE', 'BREAKFAST SET', 'COOKIE CUTTERS',
-                     'COOKING SET', 'RECIPE', 'TEA ', 'TEA-', 'TEACUP', 'FRYING',
-                     'TUMBLER', 'PLATTER']),
+                     'COOKING SET', 'RECIPE', 'TEATIME', 'TEA SET', 'TEACUP',
+                     'FRYING', 'TUMBLER', 'PLATTER']),
+    ('烛台灯具',   ['T-LIGHT', 'TEALIGHT', 'CANDL', 'LANTERN', 'FAIRY', 'LAMP',
+                     'LIGHT', 'HURRICANE']),
     ('玩具游戏',   ['TOY', 'GAME', 'PUZZLE', 'JIGSAW', 'DOLL', 'KITE', 'SKATEBOARD',
                      'ROBO', 'CARAVAN', 'PLAYING', 'DOMINO', 'BUILDING BLOCK',
                      'GLIDER', 'PRINCESS', 'SOLDIER', 'SKITTLES', 'SPACEBOY',
-                     'CIRCUS', 'WINDMILL', 'GLOBE', 'KIDS', 'CHILD']),
+                     'CIRCUS', 'WINDMILL', 'GLOBE', 'WHEELBARROW']),
     ('文具手工',   ['WRAP', 'STATIONERY', 'PENCIL', 'NOTEBOOK', 'JOURNAL', 'MEMO',
                      'STAMP', 'STICKER', 'CHALK', 'GREETING', 'BILLFOLD', 'MESSAGE',
                      'PAPERCLIP', 'DIARY', 'BLACK BOARD', 'PAINT', 'CLAY', 'FELTCRAFT',
                      'SEWING', 'ENVELOPE', 'SCISSOR', 'PENS', 'STENCIL', 'LABEL',
                      ' PEN', 'PEN.', 'PEN ', 'ERASER', 'RULER']),
-    ('收纳挂置',   ['BOX', 'HOLDER', 'HOLDR', 'HLDR', 'BIN', 'TIN', 'JAR', 'CADDY',
-                     'HOOK', 'PEG', 'RACK', 'STAND', 'ORGANISER', 'STORAGE', 'CHEST',
-                     'CASE', 'CONTAINER', 'COSMETIC', 'UTENSIL', 'KEY RACK',
+    ('收纳挂置',   ['BOX', 'HOLDER', 'HOLDR', 'HLDR', 'BIN', ' TIN', 'TIN ', 'JAR',
+                     'CADDY', 'HOOK', 'PEG', 'RACK', 'STAND', 'ORGANISER', 'STORAGE',
+                     'CHEST', 'CASE', 'CONTAINER', 'COSMETIC', 'UTENSIL', 'KEY RACK',
                      'DRAWER KNOB', 'PIGGY']),
-    ('家居保暖',   ['CUSHION', 'CUSHARE', 'BLANKET', 'RUG', 'DOORMAT', 'DOOR MAT',
-                     'PARASOL', 'UMBRELLA', 'CURTAIN', 'PILLOW', 'CLOCK', 'COAT',
-                     'SHOE', 'SLIPPER', 'SOCK', 'SOMBRERO', 'SCARF', 'BATH', 'TOWEL',
-                     'BRUSH', 'COMB', 'HOT WATER', 'HAND WARMER', 'WOOLLY', 'HOTTIE',
-                     'MIRROR', 'WALL', 'CUSH', 'MATCH', 'PONCHO', 'DUSTY BIN']),
     ('派对节庆',   ['PARTY', 'BUNTING', 'CHRISTMAS', 'EASTER', 'VALENTINE', 'BIRTHDAY',
                      'HALLOWEEN', 'WREATH', 'GARLAND', 'BELL', 'CHAIN KIT']),
     ('装饰园艺',   ['ORNAMENT', 'FIGURINE', 'STATUE', 'GARDEN', 'BIRDBATH', 'DECOR',

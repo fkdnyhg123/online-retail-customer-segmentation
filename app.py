@@ -1931,7 +1931,9 @@ elif page == "🔗 关联规则分析":
                                   title="品类共现热力图 P(列品类 | 行品类)　对角线不显示")
         fig_catheat.update_layout(margin=dict(l=40, r=20, t=70, b=120))
         st.plotly_chart(fig_catheat, width='stretch')
-        st.caption("💡 **解读**: 餐厨烘焙那一列 0.73~0.93 全表最深 —— 它几乎出现在每张发票里，是「背景类」，"
+        _kc = list(cat_basket.columns).index('餐厨烘焙')
+        _kcol = np.delete(_cond[:, _kc], _kc)
+        st.caption(f"💡 **解读**: 餐厨烘焙那一列 {_kcol.min():.2f}~{_kcol.max():.2f} 全表最深 —— 它几乎出现在每张发票里，是「背景类」，"
                    "跟谁共现都高、本身不构成搭配信号。共现概率只适合看谁是谁的必备背景，判断价值要看提升度。")
 
         _sel = pd.concat([cat_pairs.head(6), cat_pairs.tail(6)]).sort_values('校正后提升度')

@@ -175,8 +175,10 @@ ax.set_xlabel('提升度 lift', fontsize=10)
 ax.tick_params(labelsize=9.8)
 title(ax, '图3  品类级关联规则 Top 10（FP-Growth）',
       'min_support = 0.05、min_confidence = 0.30、项集最长 2；按原始提升度降序')
-fig.text(.012, .012, '注：红色那条经图5 的篮子大小校正后降为 0.58（负关联）—— 品类级规则不能只看 lift 排名。',
-         fontsize=8.8, color=RED, style='italic')
+_top_raw = P.sort_values('提升度', ascending=False).iloc[0]
+fig.text(.012, .012, '注：红色那条（原始 lift 最高的 {}×{}）经图5 的篮子大小校正后降为 {:.2f}（负关联）—— 品类级规则不能只看 lift 排名。'.format(
+         _top_raw['品类A'], _top_raw['品类B'], _top_raw['校正后提升度']),
+     fontsize=8.8, color=RED, style='italic')
 plt.savefig(os.path.join(OUT, '图3_品类级Top规则.png')); plt.close()
 
 # ---------- 图 4 单品级 vs 品类级 lift 分布 ----------
