@@ -11,7 +11,15 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+def _find_repo():
+    d = os.path.dirname(os.path.abspath(__file__))
+    while d != os.path.dirname(d):
+        if os.path.exists(os.path.join(d, 'app.py')):
+            return d
+        d = os.path.dirname(d)
+    raise RuntimeError('找不到仓库根目录 (app.py)')
+
+REPO = _find_repo()
 sys.path.insert(0, REPO)
 OUT = os.path.dirname(os.path.abspath(__file__))
 
