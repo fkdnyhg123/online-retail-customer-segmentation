@@ -7,3 +7,5 @@ __pycache__/
 .idea/
 *.pptx
 *.docx
+# 6.2 的 5 张图由 品类级规则挖掘/run_6p2_category_rules.py 随时重算生成, 不入版本库
+品类级规则挖掘/*.png

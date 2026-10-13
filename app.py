@@ -22,6 +22,8 @@ from utils.clustering import prepare_features, find_optimal_k, run_kmeans, get_c
 from utils.association import (prepare_basket_matrix, run_fpgrowth,
                                compute_cooccurrence_matrix, build_network_graph,
                                threshold_sweep, build_marketing_actions)
+from utils.category import (category_coverage, build_category_basket, mine_category_rules,
+                            category_pair_table, within_category_share)
 from utils.product_country import (description_word_stats, country_summary,
                                    uk_vs_overseas_profile, country_monthly_revenue,
                                    WORD_CN)
@@ -1847,6 +1849,124 @@ elif page == "🔗 关联规则分析":
             n_display = st.slider("显示规则数量", min_value=10, max_value=min(100, _n_rules),
                                   value=min(20, _n_rules), step=5)
         st.dataframe(display_rules.head(n_display), width='stretch', hide_index=True)
+
+        st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+
+        # --- 品类级规则: 同一套口径换个粒度再挖一次 (报告 6.2) ---
+        st.subheader("📦 品类级关联规则 (粒度对比)")
+        st.markdown("把 4,011 种商品按描述关键词归成 **11 个互斥品类**（词表来自第 6 页的提词方法，"
+                    "但改成每个 SKU 只归一类 —— 多标签会让同一商品把几个品类同时置 1，造出「自己和自己共现」的伪规则），"
+                    "再用同一套 FP-Growth 挖一遍，看结论会不会变。")
+
+        @st.cache_data(show_spinner="正在做品类映射与篮子大小校正...")
+        def cached_category_rules(_df):
+            """品类级挖掘 + 全品类对的篮子大小校正 (实现在 utils/category.py)"""
+            _basket = build_category_basket(_df)
+            return (category_coverage(_df), _basket,
+                    mine_category_rules(_basket, min_support=0.05, min_confidence=0.30, max_len=2),
+                    category_pair_table(_basket))
+
+        cat_cov, cat_basket, cat_mined, cat_pairs = cached_category_rules(cleaned_df)
+        cat_rules = cat_mined['rules']
+        cat_n_basket, cat_n_cat = cat_basket.shape
+        n_raw_pos = int((cat_pairs['提升度'] > 1).sum())
+        n_kept = int((cat_pairs['校正后提升度'] > 1).sum())
+        _same, _topn = within_category_share(cleaned_df, rules_df, top_n=20)
+
+        mm1, mm2, mm3, mm4 = st.columns(4)
+        mm1.metric("品类数 / 参与发票", f"{cat_n_cat} 类 · {cat_n_basket:,}")
+        mm2.metric("映射收入覆盖率", f"{cat_cov['coverage_pct']:.2f}%",
+                   help="未归类的「其他」只占 {:.2f}%，且已从挖掘中剔除 —— 它是万能类，留着会污染所有规则".format(
+                       cat_cov['other_pct']))
+        mm3.metric("品类级规则数", f"{len(cat_rules)}",
+                   help="min_support=0.05、min_confidence=0.30、项集最长 2。品类篮密度 49%（单品级只有 5.3%），"
+                        "阈值必须比单品级的 0.02 高一个量级，否则项集组合会爆炸")
+        mm4.metric("校正后仍为正的品类对", f"{n_kept} / {len(cat_pairs)}",
+                   delta=f"原始口径 {n_raw_pos} 对全部 >1", delta_color="inverse")
+
+        cA, cB = st.columns([1, 1.2])
+        with cA:
+            _cs = pd.Series(cat_cov['revenue_pct_by_category']).sort_values()
+            fig_catbar = px.bar(
+                x=_cs.values, y=_cs.index, orientation='h',
+                color=['其他' == k for k in _cs.index],
+                color_discrete_map={True: COLORS['danger'], False: COLORS['primary']},
+                labels={'x': '收入占比 (%)', 'y': '', 'color': ''})
+            fig_catbar.update_traces(texttemplate='%{x:.1f}%', textposition='outside')
+            fig_catbar.update_layout(**CHART_LAYOUT, height=400, showlegend=False,
+                                     title="11 个品类的收入构成")
+            fig_catbar.update_layout(margin=dict(l=40, r=60, t=60, b=40))
+            st.plotly_chart(fig_catbar, width='stretch')
+        with cB:
+            _fix = {frozenset((r['品类A'], r['品类B'])): r['校正后提升度']
+                    for _, r in cat_pairs.iterrows()}
+            _t = cat_rules.head(10).copy()
+            _t['前项'] = _t['antecedents'].map(lambda s: '+'.join(s))
+            _t['后项'] = _t['consequents'].map(lambda s: '+'.join(s))
+            _t['校正后提升度'] = [_fix.get(frozenset((next(iter(a)), next(iter(b)))))
+                              for a, b in zip(_t['antecedents'], _t['consequents'])]
+            _t = _t[['前项', '后项', 'support', 'confidence', 'lift', '校正后提升度']]
+            _t.columns = ['前项', '后项', '支持度', '置信度', '原始提升度', '校正后提升度']
+            _t['支持度'] = _t['支持度'].map(lambda x: f"{x:.3f}")
+            _t['置信度'] = _t['置信度'].map(lambda x: f"{x:.1%}")
+            for _c in ['原始提升度', '校正后提升度']:
+                _t[_c] = _t[_c].map(lambda x: f"{x:.2f}")
+            st.markdown("**品类级 Top 10 规则**（按原始提升度排序）")
+            st.dataframe(_t, width='stretch', hide_index=True, height=360)
+            st.caption("⚠️ 榜首「相框相册 → 首饰收纳盒」经下面的校正后被证伪 —— "
+                       "两个不到 2% 收入的小类叠加大篮子，最容易刷高 lift。")
+
+        _X = cat_basket.values.astype(np.int64)
+        _co = _X.T @ _X
+        _mg = _X.sum(0) / len(_X)
+        _cond = _co / (_mg[:, None] * len(_X))
+        _cond = np.where(np.eye(cat_n_cat, dtype=bool), np.nan, _cond)
+        fig_catheat = px.imshow(
+            _cond, x=list(cat_basket.columns), y=list(cat_basket.columns), aspect='auto',
+            color_continuous_scale=[[0, 'white'], [.45, '#dbeafe'], [1, '#1e3a8a']],
+            labels={'color': 'P(列|行)'})
+        fig_catheat.update_layout(**CHART_LAYOUT, height=520, xaxis_tickangle=-40,
+                                  title="品类共现热力图 P(列品类 | 行品类)　对角线不显示")
+        fig_catheat.update_layout(margin=dict(l=40, r=20, t=70, b=120))
+        st.plotly_chart(fig_catheat, width='stretch')
+        st.caption("💡 **解读**: 餐厨烘焙那一列 0.73~0.93 全表最深 —— 它几乎出现在每张发票里，是「背景类」，"
+                   "跟谁共现都高、本身不构成搭配信号。共现概率只适合看谁是谁的必备背景，判断价值要看提升度。")
+
+        _sel = pd.concat([cat_pairs.head(6), cat_pairs.tail(6)]).sort_values('校正后提升度')
+        _lab = [f"{a} × {b}" for a, b in zip(_sel['品类A'], _sel['品类B'])]
+        fig_db = go.Figure()
+        for _l, _o, _c2 in zip(_lab, _sel['提升度'], _sel['校正后提升度']):
+            fig_db.add_trace(go.Scatter(
+                x=[_o, _c2], y=[_l, _l], mode='lines',
+                line=dict(color=COLORS['danger'] if _c2 < 1 else '#cbd5e1', width=4),
+                hoverinfo='skip', showlegend=False))
+        fig_db.add_trace(go.Scatter(
+            x=_sel['提升度'], y=_lab, mode='markers', name='原始提升度',
+            marker=dict(size=13, color=COLORS['primary'], line=dict(color='white', width=1)),
+            hovertemplate='%{y}<br>原始 lift %{x:.2f}<extra></extra>'))
+        fig_db.add_trace(go.Scatter(
+            x=_sel['校正后提升度'], y=_lab, mode='markers', name='校正后提升度',
+            marker=dict(size=13, line=dict(color='white', width=1),
+                        color=[COLORS['danger'] if v < 1 else COLORS['success']
+                               for v in _sel['校正后提升度']]),
+            hovertemplate='%{y}<br>校正后 lift %{x:.2f}<extra></extra>'))
+        fig_db.add_vline(x=1.0, line=dict(color='#9ca3af', width=1, dash='dot'),
+                         annotation_text="lift = 1 独立", annotation_position="top")
+        fig_db.update_layout(**CHART_LAYOUT, height=470, xaxis_title='提升度 lift', yaxis_title='',
+                             legend=dict(orientation='h', y=1.16, x=0),
+                             title="控制「一单买几个品类」之后：红线是被证伪的假信号")
+        fig_db.update_layout(margin=dict(l=40, r=30, t=70, b=50))
+        st.plotly_chart(fig_db, width='stretch')
+        st.caption(f"💡 **解读**: 55 对品类的原始提升度**全部 >1**，但那是一单平均含 "
+                   f"{_X.sum(1).mean():.2f} 个品类（共 {cat_n_cat} 类）的算术结果。用置换零模型"
+                   "（保留每单品类数、按品类边际分布无放回随机重选，置换 200 次）校正后，"
+                   f"{len(cat_pairs) - n_kept} / {len(cat_pairs)} 对跌破 1，排名几乎反转。"
+                   "真正稳的是餐厨烘焙 × 装饰园艺 / 收纳挂置 / 烛台灯具这一组，对应家居布置 + 厨房的一站式采购。")
+        st.info(f"⚖️ **两种粒度各司其职**：单品级回答「哪两件商品该摆一起」（最高 lift "
+                f"{rules_df['lift'].max():.2f}，同系列不同色的成套购买）；品类级回答「哪些消费场景会同时被触发」"
+                f"（校正后最高 {cat_pairs['校正后提升度'].max():.2f}）。"
+                f"单品级 Top{_topn} 里有 {_same} 条的两个商品本就同属一个品类，在品类粒度下变成「类内搭配」、直接看不到。"
+                "所以不能用品类级 lift 低去否定单品级，反之亦然。")
 
         st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
