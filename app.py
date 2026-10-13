@@ -1952,10 +1952,11 @@ elif page == "🔗 关联规则分析":
             hovertemplate='%{y}<br>校正后 lift %{x:.2f}<extra></extra>'))
         fig_db.add_vline(x=1.0, line=dict(color='#9ca3af', width=1, dash='dot'),
                          annotation_text="lift = 1 独立", annotation_position="top")
-        fig_db.update_layout(**CHART_LAYOUT, height=470, xaxis_title='提升度 lift', yaxis_title='',
-                             legend=dict(orientation='h', y=1.16, x=0),
+        fig_db.update_layout(**CHART_LAYOUT, height=500, xaxis_title='提升度 lift', yaxis_title='',
+                             # 图例放底部居中: 放顶部会和左对齐的标题叠在一起
+                             legend=dict(orientation='h', y=-0.22, x=0.5, xanchor='center'),
                              title="控制「一单买几个品类」之后：红线是被证伪的假信号")
-        fig_db.update_layout(margin=dict(l=40, r=30, t=70, b=50))
+        fig_db.update_layout(margin=dict(l=40, r=30, t=70, b=90))
         st.plotly_chart(fig_db, width='stretch')
         st.caption(f"💡 **解读**: 55 对品类的原始提升度**全部 >1**，但那是一单平均含 "
                    f"{_X.sum(1).mean():.2f} 个品类（共 {cat_n_cat} 类）的算术结果。用置换零模型"

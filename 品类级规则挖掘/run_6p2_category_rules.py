@@ -25,7 +25,17 @@ plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['figure.dpi'] = 150
 NAVY, ORANGE, TEAL, GREY = '#2C6FBB', '#E8833A', '#2A9D8F', '#8A8A8A'
 
-cln = pd.read_parquet(os.path.join(REPO, '.cache_cleaned.parquet'))
+def load_cleaned():
+    """数据源就是 online_retail_II(1).xlsx。有 Parquet 缓存就读缓存 (与大屏同一份, 秒级);
+    缓存不在就回落到 xlsx 现读现清洗, 保证脚本能独立跑。"""
+    _pq = os.path.join(REPO, '.cache_cleaned.parquet')
+    if os.path.exists(_pq):
+        return pd.read_parquet(_pq)
+    from utils.data_cleaner import load_raw_data, clean_data
+    return clean_data(load_raw_data(os.path.join(REPO, 'online_retail_II(1).xlsx')))
+
+
+cln = load_cleaned()
 cov = category_coverage(cln)
 bt = build_category_basket(cln)
 cats = list(bt.columns)
