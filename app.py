@@ -21,7 +21,8 @@ from utils.rfm import (calculate_rfm, add_rfm_scores, get_rfm_stats,
 from utils.clustering import prepare_features, find_optimal_k, run_kmeans, get_cluster_labels
 from utils.association import (prepare_basket_matrix, run_fpgrowth,
                                compute_cooccurrence_matrix, build_network_graph,
-                               threshold_sweep, build_marketing_actions)
+                               threshold_sweep, build_marketing_actions,
+                               country_rule_comparison)
 from utils.category import (category_coverage, build_category_basket, mine_category_rules,
                             category_pair_table, within_category_share)
 from utils.product_country import (description_word_stats, country_summary,
@@ -226,6 +227,62 @@ METHOD_LABELS = {
     'log': '对数变换 3D',
 }
 EXT_FEATURE_SET_METHOD = {'rfm_only': 'composite', 'rfm_ext': 'pca'}
+
+# --- 商品名中文翻译 ---
+PRODUCT_CN = {
+    '60 TEATIME FAIRY CAKE CASES': '60个下午茶仙女蛋糕纸杯',
+    '72 SWEETHEART FAIRY CAKE CASES': '72个甜心仙女蛋糕纸杯',
+    'BLUE 3 PIECE MINI DOTS CUTLERY SET': '蓝色三件迷你圆点餐具套装',
+    'CHARLOTTE BAG , PINK/WHITE SPOTS': '夏洛特袋 粉白圆点',
+    'CHOCOLATE HOT WATER BOTTLE': '巧克力色热水袋',
+    'COOK WITH WINE METAL SIGN': '烹饪用酒金属标牌',
+    'CREAM HEART CARD HOLDER': '奶油色心形卡片架',
+    'GIN + TONIC DIET METAL SIGN': '金汤力减肥金属标牌',
+    'HEART OF WICKER LARGE': '大号藤编心形装饰',
+    'HEART OF WICKER SMALL': '小号藤编心形装饰',
+    'HOME BUILDING BLOCK WORD': 'HOME字母积木装饰',
+    'HOT WATER BOTTLE TEA AND SYMPATHY': '茶与同情热水袋',
+    'JUMBO  BAG BAROQUE BLACK WHITE': '超大购物袋 巴洛克黑白',
+    'JUMBO BAG PINK VINTAGE PAISLEY': '超大购物袋 粉色复古佩斯利',
+    'JUMBO BAG PINK WITH WHITE SPOTS': '超大购物袋 粉白圆点',
+    'JUMBO BAG RED WHITE SPOTTY': '超大购物袋 红白圆点',
+    'JUMBO BAG SCANDINAVIAN PAISLEY': '超大购物袋 北欧佩斯利',
+    'JUMBO BAG STRAWBERRY': '超大购物袋 草莓图案',
+    'JUMBO SHOPPER VINTAGE RED PAISLEY': '超大购物袋 复古红佩斯利',
+    'JUMBO STORAGE BAG SUKI': '超大收纳袋 SUKI款',
+    'LOVE BUILDING BLOCK WORD': 'LOVE字母积木装饰',
+    'LUNCH BAG  BLACK SKULL.': '午餐袋 黑色骷髅',
+    'LUNCH BAG CARS BLUE': '午餐袋 蓝色汽车',
+    'LUNCH BAG RED SPOTTY': '午餐袋 红色圆点',
+    'LUNCH BAG WOODLAND': '午餐袋 森林图案',
+    'LUNCHBAG PINK RETROSPOT': '午餐袋 粉色复古圆点',
+    'LUNCHBAG SPACEBOY DESIGN': '午餐袋 太空男孩',
+    'LUNCHBAG SUKI  DESIGN': '午餐袋 SUKI款',
+    'PACK OF 60 DINOSAUR CAKE CASES': '60个恐龙蛋糕纸杯',
+    'PACK OF 60 PINK PAISLEY CAKE CASES': '60个粉色佩斯利蛋糕纸杯',
+    'PACK OF 72 RETRO SPOT CAKE CASES': '72个复古圆点蛋糕纸杯',
+    'PACK OF 72 SKULL CAKE CASES': '72个骷髅蛋糕纸杯',
+    'PINK 3 PIECE MINI DOTS CUTLERY SET': '粉色三件迷你圆点餐具套装',
+    'PINK BLUE FELT CRAFT TRINKET BOX': '粉蓝色毛毡首饰盒',
+    'PINK CREAM FELT CRAFT TRINKET BOX': '粉色奶油毛毡首饰盒',
+    'PLEASE ONE PERSON  METAL SIGN': '请限一人金属标牌',
+    'RED 3 PIECE MINI DOTS CUTLERY SET': '红色三件迷你圆点餐具套装',
+    'RED HANGING HEART T-LIGHT HOLDER': '红色悬挂心形烛台',
+    'RED SPOT HEART HOT WATER BOTTLE': '红点心形热水袋',
+    'RED SPOTTY CHARLOTTE BAG': '红色圆点夏洛特袋',
+    'SCOTTIE DOG HOT WATER BOTTLE': '苏格兰犬热水袋',
+    'SET/20 RED SPOTTY PAPER NAPKINS': '20张红色圆点纸餐巾',
+    'STRAWBERRY CERAMIC TRINKET BOX': '草莓陶瓷首饰盒',
+    'SWEETHEART CERAMIC TRINKET BOX': '甜心陶瓷首饰盒',
+    'VINTAGE HEADS AND TAILS CARD GAME': '复古正反面卡牌游戏',
+    'VINTAGE SNAP CARDS': '复古拍牌游戏卡牌',
+    'WHITE HANGING HEART T-LIGHT HOLDER': '白色悬挂心形烛台',
+    'WOOD 2 DRAWER CABINET WHITE FINISH': '白色双抽木柜',
+    'WOOD S/3 CABINET ANT WHITE FINISH': '白色三层小木柜',
+    'WOODEN FRAME ANTIQUE WHITE': '白色复古木相框',
+    'WOODEN PICTURE FRAME WHITE FINISH': '白色木相框',
+    'ZINC METAL HEART DECORATION': '锌金属心形装饰',
+}
 
 # ============================================================
 # 数据加载 (缓存)
@@ -1653,61 +1710,6 @@ elif page == "🔗 关联规则分析":
     if rules_df.empty:
         st.warning("当前参数下未找到满足条件的关联规则。请尝试降低最小支持度或最小置信度。")
     else:
-        # --- 商品名中文翻译 ---
-        PRODUCT_CN = {
-            '60 TEATIME FAIRY CAKE CASES': '60个下午茶仙女蛋糕纸杯',
-            '72 SWEETHEART FAIRY CAKE CASES': '72个甜心仙女蛋糕纸杯',
-            'BLUE 3 PIECE MINI DOTS CUTLERY SET': '蓝色三件迷你圆点餐具套装',
-            'CHARLOTTE BAG , PINK/WHITE SPOTS': '夏洛特袋 粉白圆点',
-            'CHOCOLATE HOT WATER BOTTLE': '巧克力色热水袋',
-            'COOK WITH WINE METAL SIGN': '烹饪用酒金属标牌',
-            'CREAM HEART CARD HOLDER': '奶油色心形卡片架',
-            'GIN + TONIC DIET METAL SIGN': '金汤力减肥金属标牌',
-            'HEART OF WICKER LARGE': '大号藤编心形装饰',
-            'HEART OF WICKER SMALL': '小号藤编心形装饰',
-            'HOME BUILDING BLOCK WORD': 'HOME字母积木装饰',
-            'HOT WATER BOTTLE TEA AND SYMPATHY': '茶与同情热水袋',
-            'JUMBO  BAG BAROQUE BLACK WHITE': '超大购物袋 巴洛克黑白',
-            'JUMBO BAG PINK VINTAGE PAISLEY': '超大购物袋 粉色复古佩斯利',
-            'JUMBO BAG PINK WITH WHITE SPOTS': '超大购物袋 粉白圆点',
-            'JUMBO BAG RED WHITE SPOTTY': '超大购物袋 红白圆点',
-            'JUMBO BAG SCANDINAVIAN PAISLEY': '超大购物袋 北欧佩斯利',
-            'JUMBO BAG STRAWBERRY': '超大购物袋 草莓图案',
-            'JUMBO SHOPPER VINTAGE RED PAISLEY': '超大购物袋 复古红佩斯利',
-            'JUMBO STORAGE BAG SUKI': '超大收纳袋 SUKI款',
-            'LOVE BUILDING BLOCK WORD': 'LOVE字母积木装饰',
-            'LUNCH BAG  BLACK SKULL.': '午餐袋 黑色骷髅',
-            'LUNCH BAG CARS BLUE': '午餐袋 蓝色汽车',
-            'LUNCH BAG RED SPOTTY': '午餐袋 红色圆点',
-            'LUNCH BAG WOODLAND': '午餐袋 森林图案',
-            'LUNCHBAG PINK RETROSPOT': '午餐袋 粉色复古圆点',
-            'LUNCHBAG SPACEBOY DESIGN': '午餐袋 太空男孩',
-            'LUNCHBAG SUKI  DESIGN': '午餐袋 SUKI款',
-            'PACK OF 60 DINOSAUR CAKE CASES': '60个恐龙蛋糕纸杯',
-            'PACK OF 60 PINK PAISLEY CAKE CASES': '60个粉色佩斯利蛋糕纸杯',
-            'PACK OF 72 RETRO SPOT CAKE CASES': '72个复古圆点蛋糕纸杯',
-            'PACK OF 72 SKULL CAKE CASES': '72个骷髅蛋糕纸杯',
-            'PINK 3 PIECE MINI DOTS CUTLERY SET': '粉色三件迷你圆点餐具套装',
-            'PINK BLUE FELT CRAFT TRINKET BOX': '粉蓝色毛毡首饰盒',
-            'PINK CREAM FELT CRAFT TRINKET BOX': '粉色奶油毛毡首饰盒',
-            'PLEASE ONE PERSON  METAL SIGN': '请限一人金属标牌',
-            'RED 3 PIECE MINI DOTS CUTLERY SET': '红色三件迷你圆点餐具套装',
-            'RED HANGING HEART T-LIGHT HOLDER': '红色悬挂心形烛台',
-            'RED SPOT HEART HOT WATER BOTTLE': '红点心形热水袋',
-            'RED SPOTTY CHARLOTTE BAG': '红色圆点夏洛特袋',
-            'SCOTTIE DOG HOT WATER BOTTLE': '苏格兰犬热水袋',
-            'SET/20 RED SPOTTY PAPER NAPKINS': '20张红色圆点纸餐巾',
-            'STRAWBERRY CERAMIC TRINKET BOX': '草莓陶瓷首饰盒',
-            'SWEETHEART CERAMIC TRINKET BOX': '甜心陶瓷首饰盒',
-            'VINTAGE HEADS AND TAILS CARD GAME': '复古正反面卡牌游戏',
-            'VINTAGE SNAP CARDS': '复古拍牌游戏卡牌',
-            'WHITE HANGING HEART T-LIGHT HOLDER': '白色悬挂心形烛台',
-            'WOOD 2 DRAWER CABINET WHITE FINISH': '白色双抽木柜',
-            'WOOD S/3 CABINET ANT WHITE FINISH': '白色三层小木柜',
-            'WOODEN FRAME ANTIQUE WHITE': '白色复古木相框',
-            'WOODEN PICTURE FRAME WHITE FINISH': '白色木相框',
-            'ZINC METAL HEART DECORATION': '锌金属心形装饰',
-        }
 
         def _cn(name):
             return PRODUCT_CN.get(name, name)
@@ -2194,3 +2196,111 @@ elif page == "📦 商品与国家调查":
     st.plotly_chart(fig_cm, width='stretch')
     st.caption("💡 **解读**: 整体形状与第 1 页的月度收入趋势一致 (11 月冲高、12 月为不完整月份); "
                "分层后看的是海外几层的厚度是否随时间变厚 —— 变厚说明海外增速快于本土, 反之增长仍靠英国本土。")
+
+    st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
+
+    # --- 跨国关联规则对比 (报告 6.3): 国家维度的搭配差异 ---
+    st.subheader("🌍 跨国关联规则对比 (国家粒度)")
+    st.markdown("上面看各国客户**长什么样**, 这里看各国购物车里的**搭配有什么不同**。"
+                "两国共用全局 Top-50 商品全集, 规则才可比较; 计算在 `utils/association.py` 的 "
+                "`country_rule_comparison()`。")
+
+    _desc_map = cleaned_df.groupby('StockCode')['Description'].first()
+
+    def _cn6(code):
+        d = str(_desc_map.get(code, code)).strip().upper()
+        return PRODUCT_CN.get(d, str(_desc_map.get(code, code))[:16])
+
+    _cand = list(_country['Country'].head(12))
+    _s1, _s2 = st.columns(2)
+    with _s1:
+        ctry_a = st.selectbox("国家 A", _cand, index=_cand.index('United Kingdom'),
+                              help="默认英国: 主场市场, 17,520 张发票 / 3,956 位客户")
+    with _s2:
+        ctry_b = st.selectbox("国家 B", _cand, index=_cand.index('Germany'),
+                              help="默认德国: 海外发票数与客户数最多的市场 (328 张 / 67 位)。"
+                                   "不建议选爱尔兰 —— 收入虽排第二但只有 5 位客户, 是批发账户不是市场")
+
+    @st.cache_data(show_spinner="正在做跨国规则对比...")
+    def cached_country_compare(_df, ca, cb):
+        return country_rule_comparison(_df, ca, cb, top_items=50,
+                                       min_support=0.02, min_confidence=0.25)
+
+    if ctry_a == ctry_b:
+        st.warning("两个国家选成同一个了, 对比没有意义 —— 请换一个国家。")
+    else:
+        _cc = cached_country_compare(cleaned_df, ctry_a, ctry_b)
+        _cmp, _cst = _cc['comparison'], _cc['stats']
+        _com = _cmp[_cmp['归属'] == '共通'].sort_values(f'{ctry_a} 提升度', ascending=False)
+        _oa = _cmp[_cmp['归属'] == f'{ctry_a} 特有'].sort_values(f'{ctry_a} 提升度', ascending=False)
+        _ob = _cmp[_cmp['归属'] == f'{ctry_b} 特有'].sort_values(f'{ctry_b} 提升度', ascending=False)
+
+        _k1, _k2, _k3, _k4 = st.columns(4)
+        _k1.metric("共通规则", f"{len(_com)} 条")
+        _k2.metric(f"{ctry_a} 特有", f"{len(_oa)} 条")
+        _k3.metric(f"{ctry_b} 特有", f"{len(_ob)} 条")
+        _k4.metric("参与交易 (A / B)", f"{_cst[ctry_a]['交易数']:,} / {_cst[ctry_b]['交易数']:,}")
+
+        if _com.empty:
+            st.info("这两个国家在当前阈值下没有共通规则 —— 搭配偏好完全本地化, 这本身也是一条结论。")
+        else:
+            _show = _com.head(10)
+            _ylab = [f"{_cn6(a)} × {_cn6(b)}" for a, b in zip(_show['商品A'], _show['商品B'])]
+            fig_xc = go.Figure()
+            fig_xc.add_trace(go.Bar(y=_ylab, x=_show[f'{ctry_a} 提升度'], orientation='h',
+                                    name=f'{ctry_a} lift', marker_color=COLORS['primary'],
+                                    customdata=_show[f'{ctry_a} 共现笔数'],
+                                    hovertemplate='%{y}<br>lift %{x:.2f} · n=%{customdata} 笔<extra></extra>'))
+            fig_xc.add_trace(go.Bar(y=_ylab, x=_show[f'{ctry_b} 提升度'], orientation='h',
+                                    name=f'{ctry_b} lift', marker_color=COLORS['warning'],
+                                    customdata=_show[f'{ctry_b} 共现笔数'],
+                                    hovertemplate='%{y}<br>lift %{x:.2f} · n=%{customdata} 笔<extra></extra>'))
+            fig_xc.update_layout(**CHART_LAYOUT, barmode='group', height=max(360, 42 * len(_ylab)),
+                                 title=f'共通规则 Top {len(_show)}：同一条搭配在两国都成立',
+                                 xaxis_title='提升度 lift', yaxis_title='',
+                                 legend=dict(orientation='h', y=-0.18, x=0.5, xanchor='center'))
+            fig_xc.update_layout(margin=dict(l=40, r=30, t=70, b=90))
+            st.plotly_chart(fig_xc, width='stretch')
+            st.caption(f"💡 **解读**: 共通规则集中在「同系列不同花色」(午餐袋各花色两两共购、陶瓷首饰盒两款共购), "
+                       f"说明这类搭配跨市场稳定, 与第 5 页单品级结论互证。"
+                       f"但 {ctry_b} 侧共现只有 {int(_com[f'{ctry_b} 共现笔数'].min())}~"
+                       f"{int(_com[f'{ctry_b} 共现笔数'].max())} 笔, 而 {ctry_a} 侧有 "
+                       f"{int(_com[f'{ctry_a} 共现笔数'].min())}~{int(_com[f'{ctry_a} 共现笔数'].max())} 笔 —— "
+                       f"**「共通」指同向出现, 不是同样强度**, 小国侧的 lift 只能当方向性信号。")
+
+        _t1, _t2 = st.columns(2)
+        for _col, _df_, _cty, _clr in ((_t1, _oa, ctry_a, COLORS['primary']),
+                                       (_t2, _ob, ctry_b, COLORS['warning'])):
+            with _col:
+                _d = _df_.head(8)
+                if _d.empty:
+                    st.caption(f"{_cty} 在当前阈值下没有特有规则。")
+                    continue
+                fig_u = px.bar(x=_d[f'{_cty} 提升度'],
+                               y=[f"{_cn6(a)} × {_cn6(b)}" for a, b in zip(_d['商品A'], _d['商品B'])],
+                               orientation='h', color_discrete_sequence=[_clr],
+                               labels={'x': '提升度 lift', 'y': ''})
+                fig_u.update_traces(texttemplate='%{x:.2f}', textposition='outside')
+                fig_u.update_layout(**CHART_LAYOUT, height=340, showlegend=False,
+                                    title=f'{_cty} 特有 Top {len(_d)}（共 {len(_df_)} 条）')
+                fig_u.update_layout(margin=dict(l=40, r=70, t=60, b=40))
+                st.plotly_chart(fig_u, width='stretch')
+        st.caption("💡 **解读**: 特有规则反映本地偏好 —— 英国偏「同系列成套」(相框对、热水袋对), "
+                   "德国偏「烘焙 + 下午茶整组采购」(烘焙套装 × 蛋糕架 × 蛋糕纸杯)。"
+                   "小国侧 n 只有几笔, 特有规则只作展示、不作决策依据。")
+
+        _mel = _com.melt(id_vars=['商品A', '商品B'],
+                         value_vars=[f'{ctry_a} 共现笔数', f'{ctry_b} 共现笔数'],
+                         var_name='国家', value_name='共现笔数')
+        _mel['lift'] = _com[[f'{ctry_a} 提升度', f'{ctry_b} 提升度']].values.reshape(-1)
+        _mel['国家'] = _mel['国家'].str.replace(' 共现笔数', '', regex=False)
+        fig_ev = px.scatter(_mel, x='共现笔数', y='lift', color='国家', log_x=True,
+                            color_discrete_map={ctry_a: COLORS['primary'], ctry_b: COLORS['warning']},
+                            labels={'共现笔数': '共现的绝对笔数 n (对数轴)', 'lift': '提升度 lift', '国家': ''})
+        fig_ev.update_layout(**CHART_LAYOUT, height=400,
+                             title='同一条共通规则, 两国的证据量差两个数量级',
+                             legend=dict(orientation='h', y=-0.22, x=0.5, xanchor='center'))
+        fig_ev.update_layout(margin=dict(l=40, r=30, t=70, b=90))
+        st.plotly_chart(fig_ev, width='stretch')
+        st.caption("💡 **解读**: 点在横轴上隔得越远, 两国证据量差距越大。选国家时按「发票数 × 客户数」"
+                   "而不是收入 —— 否则会把 5 位客户的批发账户当成一个国家市场。")
