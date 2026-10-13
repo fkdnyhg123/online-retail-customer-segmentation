@@ -8,5 +8,3 @@ openpyxl>=3.1.0
 pyarrow>=14.0.0
 mlxtend>=0.23.0
 networkx>=3.0
-# 6.2/6.3 的出图脚本 (品类级规则挖掘/ 与 跨国规则对比/) 依赖 matplotlib; 大屏本身只用 plotly
-matplotlib>=3.8.0

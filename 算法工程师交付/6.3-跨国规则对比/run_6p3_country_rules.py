@@ -7,9 +7,6 @@
 """
 import os, sys, re, ast
 import pandas as pd, numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 
 def _find_repo():
     d = os.path.dirname(os.path.abspath(__file__))
@@ -25,12 +22,6 @@ OUT = os.path.dirname(os.path.abspath(__file__))
 
 from utils.association import country_rule_comparison
 
-plt.rcParams.update({'font.sans-serif': ['Microsoft YaHei', 'SimHei'], 'axes.unicode_minus': False,
-                     'figure.dpi': 200, 'figure.facecolor': 'white', 'savefig.facecolor': 'white',
-                     'savefig.bbox': 'tight', 'text.color': '#1F2933', 'axes.labelcolor': '#1F2933',
-                     'xtick.color': '#7B8794', 'ytick.color': '#7B8794', 'axes.edgecolor': '#EDF0F3'})
-INK, MUTED, GRID = '#1F2933', '#7B8794', '#EDF0F3'
-BLUE, ORANGE, TEAL, RED, GREY2 = '#2C6FBB', '#E8833A', '#2A9D8F', '#C1444F', '#AAB7C4'
 
 A, B = 'United Kingdom', 'Germany'
 CN_NAME = {'United Kingdom': '英国', 'Germany': '德国', 'EIRE': '爱尔兰', 'Netherlands': '荷兰',
@@ -67,22 +58,6 @@ def cn(code):
     return PRODUCT_CN.get(d.strip().upper()) or CN_EXTRA.get(d.strip().upper(), d[:16])
 
 
-def theme(ax, grid='x'):
-    for sp in ('top', 'right', 'left'):
-        ax.spines[sp].set_visible(False)
-    ax.spines['bottom'].set_color(GRID)
-    ax.tick_params(length=0)
-    if grid:
-        ax.grid(axis=grid, color=GRID, lw=.9)
-        ax.set_axisbelow(True)
-
-
-def title(ax, t, sub=None):
-    ax.set_title(t, fontsize=12.5, fontweight='bold', color=INK, loc='left', pad=30 if sub else 8)
-    if sub:
-        ax.text(0, 1.022, sub, transform=ax.transAxes, fontsize=9.2, color=MUTED, va='bottom')
-
-
 # ---------- 各国可挖掘性 ----------
 g = (cln.groupby('Country')
      .agg(发票=('Invoice', 'nunique'), 客户=('Customer ID', 'nunique'), 收入=('Revenue', 'sum'))
@@ -97,89 +72,6 @@ common = comp[comp['归属'] == '共通'].sort_values(f'{A} 提升度', ascendin
 only_a = comp[comp['归属'] == f'{A} 特有'].sort_values(f'{A} 提升度', ascending=False)
 only_b = comp[comp['归属'] == f'{B} 特有'].sort_values(f'{B} 提升度', ascending=False)
 st = res['stats']
-
-# ---------- 图 1 国家选择依据 ----------
-top8 = g.head(8).iloc[::-1]
-labels = [CN_NAME.get(k, k) for k in top8.index]
-fig, ax = plt.subplots(figsize=(9.4, 4.8))
-theme(ax)
-cols = [RED if k == 'EIRE' else (BLUE if k in (A, B) else GREY2) for k in top8.index]
-ax.barh(labels, top8['发票'], color=cols, height=.66)
-for i, (k, v) in enumerate(zip(top8.index, top8['发票'])):
-    ax.text(v * 1.15, i, f"{v:,} 张发票 · {int(g.loc[k, '客户']):,} 位客户 · 收入占 {g.loc[k, '收入占比%']:.1f}%",
-            va='center', fontsize=9, color=INK if k in (A, B, 'EIRE') else MUTED)
-ax.set_xscale('log')
-ax.set_xlabel('发票数（对数轴）', fontsize=10)
-ax.tick_params(labelsize=10)
-ax.set_xlim(1, top8['发票'].max() * 40)
-title(ax, '图1  Top2 国家选择依据：按发票数与客户数，不按收入',
-      '爱尔兰收入占 3.88% 排第二，但只有 5 位客户、平均每单 29 行 —— 是批发账户不是市场，排除；'
-      '德国 328 张发票 / 67 位客户，是海外统计意义最强的市场')
-plt.savefig(os.path.join(OUT, '图1_国家选择依据.png')); plt.close()
-
-# ---------- 图 2 共通规则 lift 对比 ----------
-fig, ax = plt.subplots(figsize=(9.8, 5.6))
-theme(ax)
-y = np.arange(len(common))[::-1]
-h = .34
-ax.barh(y + h / 2, common[f'{A} 提升度'], height=h, color=BLUE, label=f'{CN_NAME[A]} lift')
-ax.barh(y - h / 2, common[f'{B} 提升度'], height=h, color=ORANGE, label=f'{CN_NAME[B]} lift')
-ax.set_yticks(y)
-ax.set_yticklabels([f"{cn(a)} × {cn(b)}" for a, b in zip(common['商品A'], common['商品B'])], fontsize=9.4)
-for yy, (_, r) in zip(y, common.iterrows()):
-    ax.text(r[f'{A} 提升度'] + .12, yy + h / 2, f"{r[f'{A} 提升度']:.2f} (n={int(r[f'{A} 共现笔数'])})",
-            va='center', fontsize=8.6, color=BLUE)
-    ax.text(r[f'{B} 提升度'] + .12, yy - h / 2, f"{r[f'{B} 提升度']:.2f} (n={int(r[f'{B} 共现笔数'])})",
-            va='center', fontsize=8.6, color=ORANGE)
-ax.axvline(1.0, color=GREY2, lw=1)
-ax.set_xlabel('提升度 lift', fontsize=10)
-ax.set_xlim(0, common[f'{A} 提升度'].max() * 1.55)
-ax.legend(frameon=False, fontsize=9.6, loc='upper center', bbox_to_anchor=(0.5, -0.10), ncol=2)
-ax.margins(y=0.02)
-fig.subplots_adjust(bottom=0.20)
-title(ax, f'图2  {len(common)} 条共通规则：同一条搭配在两国都成立',
-      f'固定全局 Top-50 商品全集、min_support=0.02、min_confidence=0.25、项集最长 2；'
-      f'n 为共现的绝对笔数 —— 德国侧只有 {int(common[f"{B} 共现笔数"].min())}~{int(common[f"{B} 共现笔数"].max())} 笔，属方向性信号')
-plt.savefig(os.path.join(OUT, '图2_共通规则对比.png')); plt.close()
-
-# ---------- 图 3 特有规则 ----------
-fig, axes = plt.subplots(1, 2, figsize=(11.6, 4.6), sharey=False)
-for ax, df_, c, col, lab in ((axes[0], only_a.head(8), A, BLUE, CN_NAME[A]),
-                             (axes[1], only_b.head(8), B, ORANGE, CN_NAME[B])):
-    theme(ax)
-    yy = np.arange(len(df_))[::-1]
-    ax.barh(yy, df_[f'{c} 提升度'], color=col, height=.64)
-    ax.set_yticks(yy)
-    ax.set_yticklabels([f"{cn(a)} × {cn(b)}" for a, b in zip(df_['商品A'], df_['商品B'])], fontsize=8.8)
-    for yv, (_, r) in zip(yy, df_.iterrows()):
-        ax.text(r[f'{c} 提升度'] + .1, yv, f"{r[f'{c} 提升度']:.2f} (n={int(r[f'{c} 共现笔数'])})",
-                va='center', fontsize=8.4, color=MUTED)
-    ax.axvline(1.0, color=GREY2, lw=1)
-    ax.set_xlim(0, df_[f'{c} 提升度'].max() * 1.5)
-    ax.set_xlabel('提升度 lift', fontsize=9.6)
-    title(ax, f'{lab}特有 Top 8（共 {len(only_a) if c == A else len(only_b)} 条）')
-fig.suptitle('图3  特有规则：两国各自的本地搭配', fontsize=12.5, fontweight='bold', color=INK,
-             x=.02, ha='left', y=1.06)
-plt.tight_layout()
-plt.savefig(os.path.join(OUT, '图3_特有规则.png')); plt.close()
-
-# ---------- 图 4 证据量不对称 ----------
-fig, ax = plt.subplots(figsize=(9.2, 4.8))
-theme(ax, grid='both')
-ax.scatter(common[f'{A} 共现笔数'], common[f'{A} 提升度'], s=70, color=BLUE,
-           edgecolors='white', linewidths=1, label=f'{CN_NAME[A]}（主场市场）', zorder=3)
-ax.scatter(common[f'{B} 共现笔数'], common[f'{B} 提升度'], s=70, color=ORANGE, marker='s',
-           edgecolors='white', linewidths=1, label=f'{CN_NAME[B]}（海外市场）', zorder=3)
-ax.set_xscale('log')
-ax.set_xlabel('共现的绝对笔数 n（对数轴）', fontsize=10)
-ax.set_ylabel('提升度 lift', fontsize=10)
-ax.tick_params(labelsize=9.6)
-ax.legend(frameon=False, fontsize=9.6)
-title(ax, '图4  同一条共通规则，两国的证据量差两个数量级',
-      f'英国侧 n = {int(common[f"{A} 共现笔数"].min())}~{int(common[f"{A} 共现笔数"].max())} 笔是硬证据；'
-      f'德国侧 n = {int(common[f"{B} 共现笔数"].min())}~{int(common[f"{B} 共现笔数"].max())} 笔，'
-      'lift 的方向可信、数值不可信 —— 报告里必须这样写')
-plt.savefig(os.path.join(OUT, '图4_证据量不对称.png')); plt.close()
 
 # ---------- CSV / 说明 ----------
 comp.round(4).to_csv(os.path.join(OUT, '表_两国规则对比全表.csv'), index=False, encoding='utf-8-sig')
@@ -213,7 +105,8 @@ md = f"""# 6.3 跨国关联规则对比 —— 结果说明
 - 若老师追问「为什么不做爱尔兰」：5 位客户的样本做规则挖掘，等于把 5 个人的购物车当国家偏好。
 
 ## 五、文件清单
-图1_国家选择依据.png / 图2_共通规则对比.png / 图3_特有规则.png / 图4_证据量不对称.png
+图不再生成静态文件：报告用图直接从大屏页面 6「🌍 跨国关联规则对比 (国家粒度)」板块截图
+（共通规则两国 lift 并排 / 特有规则双栏 / 证据量散点三张；国家选择依据可用页面 6 的国家明细表截图代替）。
 表_两国规则对比全表.csv / 表_共通规则.csv / 表_各国可挖掘性.csv
 """
 open(os.path.join(OUT, '结果说明.md'), 'w', encoding='utf-8').write(md)
