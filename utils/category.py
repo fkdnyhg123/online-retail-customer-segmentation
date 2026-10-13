@@ -98,7 +98,7 @@ def category_coverage(cleaned_df: pd.DataFrame) -> dict:
               / total * 100).round(2)
     return {
         'n_sku': int(len(t)),
-        'n_category': int((t['Category'] != OTHER).sum() and t['Category'].nunique() - 1),
+        'n_category': int(t.loc[t['Category'] != OTHER, 'Category'].nunique()),
         'coverage_pct': round(mapped / total * 100, 2),
         'other_pct': round(100 - mapped / total * 100, 2),
         'other_sku': int((t['Category'] == OTHER).sum()),
