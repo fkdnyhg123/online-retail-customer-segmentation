@@ -213,5 +213,7 @@ def within_category_share(cleaned_df: pd.DataFrame, item_rules: pd.DataFrame,
 
 
 if __name__ == '__main__':
-    df = pd.read_parquet('.cache_cleaned.parquet')
-    print(category_coverage(df))
+    import os
+    from utils.data_cleaner import load_cleaned
+    _repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    print(category_coverage(load_cleaned(_repo)))

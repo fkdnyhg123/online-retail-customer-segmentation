@@ -6,8 +6,31 @@ Independent module - can be called from Streamlit app or standalone scripts.
 Actual column names in the Excel file:
   Invoice, StockCode, Description, Quantity, InvoiceDate, Price, Customer ID, Country
 """
+import os
+
 import pandas as pd
 import numpy as np
+
+# 数据文件统一放在仓库根的「数据/」目录: 原始 xlsx + Parquet 缓存 + 指纹文件。
+# app.py 的 load_and_clean() 以 xlsx 路径推导缓存位置, 所以缓存天然落在同一目录。
+DATA_DIRNAME = '数据'
+XLSX_NAME = 'online_retail_II(1).xlsx'
+
+
+def data_paths(base_dir: str) -> tuple:
+    """返回 (xlsx 绝对路径, 数据目录绝对路径)。"""
+    d = os.path.join(base_dir, DATA_DIRNAME)
+    return os.path.join(d, XLSX_NAME), d
+
+
+def load_cleaned(base_dir: str) -> pd.DataFrame:
+    """清洗后交易表。优先读 Parquet 缓存 (与大屏同一份, 秒级);
+    缓存不在就回落到 xlsx 现读现清洗, 保证脚本能脱离缓存独立跑。"""
+    xlsx, d = data_paths(base_dir)
+    pq = os.path.join(d, '.cache_cleaned.parquet')
+    if os.path.exists(pq):
+        return pd.read_parquet(pq)
+    return clean_data(load_raw_data(xlsx))
 
 # Column name constants for consistency
 COL_INVOICE = 'Invoice'

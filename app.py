@@ -349,7 +349,7 @@ def load_and_clean(filepath):
     rfm_stats = get_rfm_stats(rfm_df)
     return raw_df, cleaned_df, quality_report, cleaned_quality, cleaning_summary, rfm_df, rfm_scored, rfm_stats
 
-DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "online_retail_II(1).xlsx")
+DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "数据", "online_retail_II(1).xlsx")
 raw_df, cleaned_df, quality_report, cleaned_quality, cleaning_summary, rfm_df, rfm_scored, rfm_stats = load_and_clean(DATA_PATH)
 
 # ---- 页面 2 缓存函数 ----
