@@ -330,3 +330,75 @@ def build_marketing_actions(rules_df: pd.DataFrame, top_n: int = 8) -> pd.DataFr
         if len(rows) >= top_n:
             break
     return pd.DataFrame(rows)
+
+
+def country_rule_comparison(cleaned_df: pd.DataFrame, country_a: str, country_b: str,
+                            top_items: int = 50, min_support: float = 0.02,
+                            min_confidence: float = 0.25, max_len: int = 2) -> dict:
+    """
+    跨国关联规则对比 (报告 6.3)。
+
+    三个口径决定可比性, 缺一不可:
+      1. **固定商品全集**: 用全局 Top-N 高频 StockCode 作为两国的列集合。若各国各取自己的
+         Top-N, 规则的商品对就不可比, "共通/特有" 会变成商品集合差异而非搭配差异。
+      2. **相对支持度 + 绝对笔数并报**: 支持度是各国样本内的比例 (小国分母小), 所以同时
+         给出共现的绝对笔数 n —— 德国的 2% 只有 4 笔, 只能当方向性信号, 不能当证据。
+      3. **A→B 与 B→A 视为同一条**: 按无序商品对取集合交/差, 否则同一组合会被算成两条。
+
+    选国家的依据 (不要按收入选): 爱尔兰收入排第二但只有 5 位客户, 是批发账户不是市场;
+    按「发票数 × 客户数」选才有统计意义。
+
+    Returns:
+        dict: universe (固定商品全集), countries {国名: {basket, itemsets, rules}},
+              comparison (两国规则并集 + 归属列), stats (各国交易数等)
+    """
+    universe = cleaned_df['StockCode'].value_counts().head(top_items).index.tolist()
+    countries = {}
+    for c in (country_a, country_b):
+        sub = cleaned_df[(cleaned_df['Country'] == c) & (cleaned_df['StockCode'].isin(universe))]
+        basket = pd.crosstab(sub['Invoice'], sub['StockCode']) > 0
+        fi = fpgrowth(basket, min_support=min_support, use_colnames=True, max_len=max_len)
+        rr = association_rules(fi, metric='lift', min_threshold=1.0) if len(fi) > 1 else pd.DataFrame()
+        if len(rr):
+            rr = rr[rr['confidence'] >= min_confidence].reset_index(drop=True)
+        countries[c] = {'basket': basket, 'itemsets': fi, 'rules': rr}
+
+    def _keyed(rr, n_tx):
+        out = {}
+        for _, r in rr.iterrows():
+            k = frozenset((next(iter(r['antecedents'])), next(iter(r['consequents']))))
+            out[k] = {'support': float(r['support']), 'confidence': float(r['confidence']),
+                      'lift': float(r['lift']), 'n': int(round(r['support'] * n_tx))}
+        return out
+
+    ka = _keyed(countries[country_a]['rules'], len(countries[country_a]['basket']))
+    kb = _keyed(countries[country_b]['rules'], len(countries[country_b]['basket']))
+    common, only_a, only_b = set(ka) & set(kb), set(ka) - set(kb), set(kb) - set(ka)
+
+    rows = []
+    for k in common | only_a | only_b:
+        a, b = ka.get(k), kb.get(k)
+        items = sorted(k)
+        rows.append({
+            '商品A': items[0], '商品B': items[1],
+            '归属': '共通' if k in common else (f'{country_a} 特有' if k in only_a else f'{country_b} 特有'),
+            f'{country_a} 支持度': a['support'] if a else None,
+            f'{country_a} 置信度': a['confidence'] if a else None,
+            f'{country_a} 提升度': a['lift'] if a else None,
+            f'{country_a} 共现笔数': a['n'] if a else None,
+            f'{country_b} 支持度': b['support'] if b else None,
+            f'{country_b} 置信度': b['confidence'] if b else None,
+            f'{country_b} 提升度': b['lift'] if b else None,
+            f'{country_b} 共现笔数': b['n'] if b else None,
+        })
+    comp = pd.DataFrame(rows).sort_values(['归属', f'{country_a} 提升度'],
+                                          ascending=[True, False]).reset_index(drop=True)
+    return {
+        'universe': universe,
+        'countries': countries,
+        'comparison': comp,
+        'counts': {'共通': len(common), f'{country_a} 特有': len(only_a), f'{country_b} 特有': len(only_b)},
+        'stats': {c: {'交易数': len(countries[c]['basket']),
+                      '含≥2件目标商品': int((countries[c]['basket'].values.sum(1) >= 2).sum()),
+                      '规则数': len(countries[c]['rules'])} for c in (country_a, country_b)},
+    }
