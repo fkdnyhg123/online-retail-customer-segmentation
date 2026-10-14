@@ -2204,8 +2204,8 @@ elif page == "📦 商品与国家调查":
     # --- 跨国关联规则对比 (报告 6.3): 国家维度的搭配差异 ---
     st.subheader("🌍 跨国关联规则对比 (国家粒度)")
     st.markdown("上面看各国客户**长什么样**, 这里看各国购物车里的**搭配有什么不同**。"
-                "两国共用全局 Top-50 商品全集, 规则才可比较; 计算在 `utils/association.py` 的 "
-                "`country_rule_comparison()`。")
+                "两国共用全局 Top-50 商品全集, 规则才可比较; 支持度取各国样本内的 2%, "
+                "但同时给出共现的绝对笔数 —— 小国的那一列只能当方向性信号。")
 
     _desc_map = cleaned_df.groupby('StockCode')['Description'].first()
 
@@ -2213,15 +2213,22 @@ elif page == "📦 商品与国家调查":
         d = str(_desc_map.get(code, code)).strip().upper()
         return PRODUCT_CN.get(d, str(_desc_map.get(code, code))[:16])
 
+    COUNTRY_CN = {'United Kingdom': '英国', 'Germany': '德国', 'EIRE': '爱尔兰',
+                  'Netherlands': '荷兰', 'France': '法国', 'Denmark': '丹麦',
+                  'Spain': '西班牙', 'Belgium': '比利时', 'Sweden': '瑞典',
+                  'Italy': '意大利', 'Portugal': '葡萄牙', 'Australia': '澳大利亚'}
     _cand = list(_country['Country'].head(12))
+    _cand_cn = [f"{COUNTRY_CN.get(c, c)} ({c})" for c in _cand]
+    _cn2code = dict(zip(_cand_cn, _cand))
     _s1, _s2 = st.columns(2)
     with _s1:
-        ctry_a = st.selectbox("国家 A", _cand, index=_cand.index('United Kingdom'),
-                              help="默认英国: 主场市场, 17,520 张发票 / 3,956 位客户")
+        ctry_a = _cn2code[st.selectbox("国家 A", _cand_cn, index=_cand.index('United Kingdom'),
+                                    help="默认英国: 主场市场, 17,520 张发票 / 3,956 位客户")]
     with _s2:
-        ctry_b = st.selectbox("国家 B", _cand, index=_cand.index('Germany'),
-                              help="默认德国: 海外发票数与客户数最多的市场 (328 张 / 67 位)。"
-                                   "不建议选爱尔兰 —— 收入虽排第二但只有 5 位客户, 是批发账户不是市场")
+        ctry_b = _cn2code[st.selectbox("国家 B", _cand_cn, index=_cand.index('Germany'),
+                                    help="默认德国: 海外发票数与客户数最多的市场 (328 张 / 67 位)。"
+                                         "不建议选爱尔兰 —— 收入虽排第二但只有 5 位客户, 是批发账户不是市场")]
+    _na, _nb = COUNTRY_CN.get(ctry_a, ctry_a), COUNTRY_CN.get(ctry_b, ctry_b)
 
     @st.cache_data(show_spinner="正在做跨国规则对比...")
     def cached_country_compare(_df, ca, cb):
@@ -2239,8 +2246,8 @@ elif page == "📦 商品与国家调查":
 
         _k1, _k2, _k3, _k4 = st.columns(4)
         _k1.metric("共通规则", f"{len(_com)} 条")
-        _k2.metric(f"{ctry_a} 特有", f"{len(_oa)} 条")
-        _k3.metric(f"{ctry_b} 特有", f"{len(_ob)} 条")
+        _k2.metric(f"{_na} 特有", f"{len(_oa)} 条")
+        _k3.metric(f"{_nb} 特有", f"{len(_ob)} 条")
         _k4.metric("参与交易 (A / B)", f"{_cst[ctry_a]['交易数']:,} / {_cst[ctry_b]['交易数']:,}")
 
         if _com.empty:
@@ -2250,11 +2257,11 @@ elif page == "📦 商品与国家调查":
             _ylab = [f"{_cn6(a)} × {_cn6(b)}" for a, b in zip(_show['商品A'], _show['商品B'])]
             fig_xc = go.Figure()
             fig_xc.add_trace(go.Bar(y=_ylab, x=_show[f'{ctry_a} 提升度'], orientation='h',
-                                    name=f'{ctry_a} lift', marker_color=COLORS['primary'],
+                                    name=f'{_na} lift', marker_color=COLORS['primary'],
                                     customdata=_show[f'{ctry_a} 共现笔数'],
                                     hovertemplate='%{y}<br>lift %{x:.2f} · n=%{customdata} 笔<extra></extra>'))
             fig_xc.add_trace(go.Bar(y=_ylab, x=_show[f'{ctry_b} 提升度'], orientation='h',
-                                    name=f'{ctry_b} lift', marker_color=COLORS['warning'],
+                                    name=f'{_nb} lift', marker_color=COLORS['warning'],
                                     customdata=_show[f'{ctry_b} 共现笔数'],
                                     hovertemplate='%{y}<br>lift %{x:.2f} · n=%{customdata} 笔<extra></extra>'))
             fig_xc.update_layout(**CHART_LAYOUT, barmode='group', height=max(360, 42 * len(_ylab)),
@@ -2265,18 +2272,18 @@ elif page == "📦 商品与国家调查":
             st.plotly_chart(fig_xc, width='stretch')
             st.caption(f"💡 **解读**: 共通规则集中在「同系列不同花色」(午餐袋各花色两两共购、陶瓷首饰盒两款共购), "
                        f"说明这类搭配跨市场稳定, 与第 5 页单品级结论互证。"
-                       f"但 {ctry_b} 侧共现只有 {int(_com[f'{ctry_b} 共现笔数'].min())}~"
-                       f"{int(_com[f'{ctry_b} 共现笔数'].max())} 笔, 而 {ctry_a} 侧有 "
+                       f"但 {_nb} 侧共现只有 {int(_com[f'{ctry_b} 共现笔数'].min())}~"
+                       f"{int(_com[f'{ctry_b} 共现笔数'].max())} 笔, 而 {_na} 侧有 "
                        f"{int(_com[f'{ctry_a} 共现笔数'].min())}~{int(_com[f'{ctry_a} 共现笔数'].max())} 笔 —— "
                        f"**「共通」指同向出现, 不是同样强度**, 小国侧的 lift 只能当方向性信号。")
 
         _t1, _t2 = st.columns(2)
-        for _col, _df_, _cty, _clr in ((_t1, _oa, ctry_a, COLORS['primary']),
-                                       (_t2, _ob, ctry_b, COLORS['warning'])):
+        for _col, _df_, _cty, _cty_cn, _clr in ((_t1, _oa, ctry_a, _na, COLORS['primary']),
+                                                (_t2, _ob, ctry_b, _nb, COLORS['warning'])):
             with _col:
                 _d = _df_.head(8)
                 if _d.empty:
-                    st.caption(f"{_cty} 在当前阈值下没有特有规则。")
+                    st.caption(f"{_cty_cn} 在当前阈值下没有特有规则。")
                     continue
                 fig_u = px.bar(x=_d[f'{_cty} 提升度'],
                                y=[f"{_cn6(a)} × {_cn6(b)}" for a, b in zip(_d['商品A'], _d['商品B'])],
@@ -2284,20 +2291,20 @@ elif page == "📦 商品与国家调查":
                                labels={'x': '提升度 lift', 'y': ''})
                 fig_u.update_traces(texttemplate='%{x:.2f}', textposition='outside')
                 fig_u.update_layout(**CHART_LAYOUT, height=340, showlegend=False,
-                                    title=f'{_cty} 特有 Top {len(_d)}（共 {len(_df_)} 条）')
+                                    title=f'{_cty_cn} 特有 Top {len(_d)}（共 {len(_df_)} 条）')
                 fig_u.update_layout(margin=dict(l=40, r=70, t=60, b=40))
                 st.plotly_chart(fig_u, width='stretch')
-        st.caption("💡 **解读**: 特有规则反映本地偏好 —— 英国偏「同系列成套」(相框对、热水袋对), "
-                   "德国偏「烘焙 + 下午茶整组采购」(烘焙套装 × 蛋糕架 × 蛋糕纸杯)。"
-                   "小国侧 n 只有几笔, 特有规则只作展示、不作决策依据。")
+        st.caption(f"💡 **解读**: 特有规则反映本地偏好 —— 默认口径下 {_na} 偏「同系列成套」(相框对、热水袋对), "
+                   f"{_nb} 偏「烘焙 + 下午茶整组采购」(烘焙套装 × 蛋糕架 × 蛋糕纸杯); 两国 Top 组合几乎不重叠, "
+                   "说明跨国套用同一套捆绑方案会失效。小国侧 n 只有几笔, 特有规则只作展示、不作决策依据。")
 
         _mel = _com.melt(id_vars=['商品A', '商品B'],
                          value_vars=[f'{ctry_a} 共现笔数', f'{ctry_b} 共现笔数'],
                          var_name='国家', value_name='共现笔数')
         _mel['lift'] = _com[[f'{ctry_a} 提升度', f'{ctry_b} 提升度']].values.reshape(-1)
-        _mel['国家'] = _mel['国家'].str.replace(' 共现笔数', '', regex=False)
+        _mel['国家'] = _mel['国家'].str.replace(' 共现笔数', '', regex=False).map(lambda c: COUNTRY_CN.get(c, c))
         fig_ev = px.scatter(_mel, x='共现笔数', y='lift', color='国家', log_x=True,
-                            color_discrete_map={ctry_a: COLORS['primary'], ctry_b: COLORS['warning']},
+                            color_discrete_map={_na: COLORS['primary'], _nb: COLORS['warning']},
                             labels={'共现笔数': '共现的绝对笔数 n (对数轴)', 'lift': '提升度 lift', '国家': ''})
         fig_ev.update_layout(**CHART_LAYOUT, height=400,
                              title='同一条共通规则, 两国的证据量差两个数量级',
