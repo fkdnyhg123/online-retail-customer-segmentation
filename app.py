@@ -398,13 +398,13 @@ def compute_distribution_stats(_df):
     return results
 
 @st.cache_data(show_spinner=False)
-def compute_top_products(_df, top_n):
-    """计算热销商品排名 (缓存)"""
+def compute_top_products(_df, top_n, sort_by='收入'):
+    """计算热销商品排名 (缓存); sort_by 可选 收入 / 销量 / 订单数"""
     tp = _df.groupby(['StockCode', 'Description']).agg(
         收入=('Revenue', 'sum'),
         销量=('Quantity', 'sum'),
         订单数=('Invoice', 'nunique')
-    ).sort_values('收入', ascending=False).head(top_n).reset_index()
+    ).sort_values(sort_by, ascending=False).head(top_n).reset_index()
     tp['商品名称'] = tp.apply(lambda r: f"{r['Description']}  ({r['StockCode']})", axis=1)
     return tp
 
@@ -628,7 +628,7 @@ if page == "📈 数据概览":
     st.subheader("📋 数据理解与基础探索")
     st.markdown("""
     **数据集来源**: UCI 机器学习仓库 — Online Retail II (ID: 502)，包含一家英国在线零售商 2009.12 至 2010.12 的全部交易记录。
-    **8 个字段**: Invoice (发票号), StockCode (商品编码), Description (商品描述), Quantity (数量), InvoiceDate (日期), Price (单价), Customer ID (客户ID), Country (国家)。
+    **8 个字段**: Invoice (发票号, 文本), StockCode (商品编码, 文本), Description (商品描述, 文本), Quantity (数量, 整数), InvoiceDate (日期, 日期时间), Price (单价, 小数), Customer ID (客户ID, 整数), Country (国家, 文本)。
     """)
 
     # 数据规模快速概览
@@ -813,18 +813,30 @@ if page == "📈 数据概览":
     # 月度收入趋势 + 国家排名
     col_left, col_right = st.columns([3, 2])
     with col_left:
-        st.subheader("📈 月度收入趋势")
-        monthly = cleaned_df.set_index('InvoiceDate').resample('ME')['Revenue'].sum().reset_index()
-        fig_revenue = px.area(monthly, x='InvoiceDate', y='Revenue',
-                              labels={'Revenue': '收入 (美元 $)', 'InvoiceDate': '日期'},
+        st.subheader("📈 月度趋势")
+        _trend_metric = st.radio("看哪个指标", ["收入", "销量"], horizontal=True,
+                                 key="overview_trend_metric", label_visibility="collapsed")
+        _trend_col = 'Revenue' if _trend_metric == '收入' else 'Quantity'
+        _trend_label = '收入 (美元 $)' if _trend_metric == '收入' else '销量 (件)'
+        monthly = cleaned_df.set_index('InvoiceDate').resample('ME')[_trend_col].sum().reset_index()
+        fig_revenue = px.area(monthly, x='InvoiceDate', y=_trend_col,
+                              labels={_trend_col: _trend_label, 'InvoiceDate': '日期'},
                               color_discrete_sequence=[COLORS['primary']])
         fig_revenue.update_layout(**CHART_LAYOUT, height=420, hovermode='x unified',
-                                  xaxis_title='日期', yaxis_title='收入 (美元 $)')
+                                  xaxis_title='日期', yaxis_title=_trend_label)
         st.plotly_chart(fig_revenue, width='stretch')
 
     with col_right:
-        st.subheader("🌍 国家收入排名 Top 10")
-        country_rev = cleaned_df.groupby('Country')['Revenue'].sum().sort_values(ascending=False).head(10).reset_index()
+        st.subheader("🌍 国家排名 Top 10")
+        _country_metric = st.radio("按哪个指标", ["收入", "订单数"], horizontal=True,
+                                   key="overview_country_metric", label_visibility="collapsed")
+        _country_col = '收入' if _country_metric == '收入' else '订单数'
+        if _country_metric == '收入':
+            _country_agg = cleaned_df.groupby('Country')['Revenue'].sum()
+        else:
+            _country_agg = cleaned_df.groupby('Country')['Invoice'].nunique()
+        country_rev = _country_agg.sort_values(ascending=False).head(10).reset_index()
+        country_rev.columns = ['Country', _country_col]
         country_cn = {'United Kingdom': '英国', 'EIRE': '爱尔兰', 'Netherlands': '荷兰',
                       'Germany': '德国', 'France': '法国', 'Denmark': '丹麦',
                       'Sweden': '瑞典', 'Spain': '西班牙', 'Switzerland': '瑞士',
@@ -832,11 +844,11 @@ if page == "📈 数据概览":
                       'Italy': '意大利', 'Belgium': '比利时', 'Portugal': '葡萄牙',
                       'USA': '美国', 'Japan': '日本', 'Finland': '芬兰'}
         country_rev['国家'] = country_rev['Country'].map(lambda x: f"{country_cn.get(x, x)} ({x})")
-        fig_country = px.bar(country_rev, x='Revenue', y='国家', orientation='h',
-                             color='Revenue', color_continuous_scale='Blues')
+        fig_country = px.bar(country_rev, x=_country_col, y='国家', orientation='h',
+                             color=_country_col, color_continuous_scale='Blues')
         fig_country.update_layout(**CHART_LAYOUT, height=420, showlegend=False,
                                   yaxis={'categoryorder': 'total ascending'},
-                                  xaxis_title='收入 (美元 $)')
+                                  xaxis_title='收入 (美元 $)' if _country_metric == '收入' else '订单数 (张)')
         st.plotly_chart(fig_country, width='stretch')
 
 # ============================================================
@@ -938,17 +950,20 @@ elif page == "🔍 数据探索":
 
     # ---- 热销商品 ----
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
-    st.subheader("🏆 热销商品排名 (按收入)")
+    st.subheader("🏆 热销商品排名")
+    _top_metric = st.radio("按哪个指标", ["收入", "销量", "订单数"], horizontal=True,
+                           key="top_product_metric", label_visibility="collapsed")
     top_n = st.slider("显示数量", min_value=5, max_value=30, value=20, step=5, key="top_n")
-    top_products = compute_top_products(explore_df, top_n)
-    fig_top = px.bar(top_products, x='收入', y='商品名称', orientation='h',
-                     color='收入', color_continuous_scale='Viridis',
+    top_products = compute_top_products(explore_df, top_n, _top_metric)
+    fig_top = px.bar(top_products, x=_top_metric, y='商品名称', orientation='h',
+                     color=_top_metric, color_continuous_scale='Viridis',
                      hover_data=['StockCode', '销量', '订单数'])
     fig_top.update_layout(**CHART_LAYOUT, height=max(350, top_n * 32), showlegend=False,
                           yaxis={'categoryorder': 'total ascending'},
-                          xaxis_title='总收入 (美元 $)')
+                          xaxis_title={'收入': '总收入 (美元 $)', '销量': '销量 (件)',
+                                       '订单数': '订单数 (张)'}[_top_metric])
     st.plotly_chart(fig_top, width='stretch')
-    st.caption("💡 **解读**: 热销商品以家居装饰和节日用品为主，排名靠前的 WHITE HANGING HEART T-LIGHT HOLDER 收入远超其余商品 —— 少量头部商品贡献了大部分收入。")
+    st.caption("💡 **解读**: 默认按收入看，头部是家居装饰和节日用品；切到销量或订单数，能看出哪些商品是「走量」而不是「卖得贵」——两种榜单回答的问题不一样。")
 
 # ============================================================
 # 页面 3: RFM 分析
@@ -971,6 +986,7 @@ elif page == "👥 客户特征分析":
         "| 维度 | 中位数 | 均值 | 上四分位 | 前10%阈值 |\n"
         "|:---|:---:|:---:|:---:|:---:|\n" + "\n".join(_rows)
     )
+    st.caption("计算口径: R = 快照日（数据最后一天 + 1 天）减最后购买日；F = 不重复发票数；M = 该客户总收入。")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
