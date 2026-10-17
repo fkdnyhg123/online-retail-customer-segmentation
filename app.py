@@ -291,7 +291,12 @@ def _cache_fingerprint(filepath: str) -> str:
     """数据文件 + 清洗模块的内容指纹, 任一变化即令 Parquet 缓存失效。
     用内容哈希而非 mtime: Streamlit Cloud 每次检出仓库都会重写文件时间戳, 比较结果不可靠。"""
     h = hashlib.sha256()
-    targets = [filepath, os.path.join(os.path.dirname(filepath), 'utils', 'data_cleaner.py')]
+    # 清洗模块的路径必须从 app.py 自身推导, 不能从 filepath 推: 数据挪进「数据/」之后,
+    # dirname(filepath) 已经是数据目录而不是仓库根, 拼出来的 utils/... 不存在,
+    # 会静默走进下面的 except 分支写 <missing> —— 于是改清洗逻辑不再让缓存失效,
+    # 大屏会一直读旧的 .cache_cleaned.parquet, 表现为「代码改了、数字没变」。
+    _root = os.path.dirname(os.path.abspath(__file__))
+    targets = [filepath, os.path.join(_root, 'utils', 'data_cleaner.py')]
     for p in targets:
         h.update(os.path.basename(str(p)).encode('utf-8'))
         try:
