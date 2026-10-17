@@ -214,6 +214,9 @@ def within_category_share(cleaned_df: pd.DataFrame, item_rules: pd.DataFrame,
 
 if __name__ == '__main__':
     import os
-    from utils.data_cleaner import load_cleaned
-    _repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    print(category_coverage(load_cleaned(_repo)))
+    import pandas as pd
+    # 独立自测入口: 直接读大屏用的那一份 Parquet 缓存, 不经过 Streamlit 运行时。
+    # 缓存由 app.py 首次加载时回写; 没有缓存就先 streamlit run app.py 跑一次。
+    _pq = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       '数据', '.cache_cleaned.parquet')
+    print(category_coverage(pd.read_parquet(_pq)))
