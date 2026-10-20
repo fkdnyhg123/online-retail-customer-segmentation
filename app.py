@@ -373,11 +373,11 @@ def compute_distribution_stats(_df):
                      'labels': ['1-2件', '3-5件', '6-12件', '13-24件', '25-50件', '50+件'],
                      'unit': '', 'fmt': '{:.0f}', 'numfmt': '{:.0f}'},
         'Price':    {'bins': [0, 1, 2, 5, 10, 20, float('inf')],
-                     'labels': ['$0-1', '$1-2', '$2-5', '$5-10', '$10-20', '$20+'],
-                     'unit': '美元', 'fmt': '{:.2f} 美元', 'numfmt': '{:.2f}'},
+                     'labels': ['£0-1', '£1-2', '£2-5', '£5-10', '£10-20', '£20+'],
+                     'unit': '英镑', 'fmt': '{:.2f} 英镑', 'numfmt': '{:.2f}'},
         'Revenue':  {'bins': [0, 5, 10, 20, 50, 100, float('inf')],
-                     'labels': ['$0-5', '$5-10', '$10-20', '$20-50', '$50-100', '$100+'],
-                     'unit': '美元', 'fmt': '{:.2f} 美元', 'numfmt': '{:.2f}'},
+                     'labels': ['£0-5', '£5-10', '£10-20', '£20-50', '£50-100', '£100+'],
+                     'unit': '英镑', 'fmt': '{:.2f} 英镑', 'numfmt': '{:.2f}'},
     }
     for col, cfg in configs.items():
         s = _df[col]
@@ -426,9 +426,9 @@ def compute_rfm_segments(_rfm_df):
         },
         'Monetary': {
             'bins': [0, 200, 500, 1000, 2000, 5000, float('inf')],
-            'labels': ['$0-200', '$200-500', '$500-1K', '$1K-2K', '$2K-5K', '$5K+'],
-            'xaxis_title': '总消费 ($)', 'title': 'M - 消费金额分布',
-            'color': COLORS['success'], 'fmt': '{:.0f} 美元', 'numfmt': '{:.0f}', 'unit': '美元',
+            'labels': ['£0-200', '£200-500', '£500-1K', '£1K-2K', '£2K-5K', '£5K+'],
+            'xaxis_title': '总消费 (£)', 'title': 'M - 消费金额分布',
+            'color': COLORS['success'], 'fmt': '{:.0f} 英镑', 'numfmt': '{:.0f}', 'unit': '英镑',
         },
     }
     results = {}
@@ -532,9 +532,9 @@ def compute_extended_segments(_rfm_df):
     configs = {
         'AOV': {
             'bins': [0, 100, 200, 300, 500, 1000, float('inf')],
-            'labels': ['$0-100', '$100-200', '$200-300', '$300-500', '$500-1K', '$1K+'],
-            'xaxis_title': '平均客单价 ($)', 'title': 'AOV - 平均客单价分布',
-            'color': COLORS['info'], 'numfmt': '{:.0f}', 'unit': '美元',
+            'labels': ['£0-100', '£100-200', '£200-300', '£300-500', '£500-1K', '£1K+'],
+            'xaxis_title': '平均客单价 (£)', 'title': 'AOV - 平均客单价分布',
+            'color': COLORS['info'], 'numfmt': '{:.0f}', 'unit': '英镑',
         },
         'N_products': {
             'bins': [0, 10, 25, 50, 100, 200, float('inf')],
@@ -749,15 +749,15 @@ if page == "📈 数据概览":
     _cmp_table = pd.DataFrame({
         '对比项': ['交易记录数', '客户数', '商品数', '发票数', '平均数量', '平均单价', '时间范围'],
         '清洗前': [f"{_raw_rows:,}", f"{_raw_customers:,}", f"{_raw_products:,}", f"{_raw_invoices:,}",
-                  f"{_avg_qty_before:.1f}", f"${_avg_price_before:.2f}", _date_before],
+                  f"{_avg_qty_before:.1f}", f"£{_avg_price_before:.2f}", _date_before],
         '清洗后': [f"{_clean_rows:,}", f"{_clean_customers:,}", f"{_clean_products:,}", f"{_clean_invoices:,}",
-                  f"{_avg_qty_after:.1f}", f"${_avg_price_after:.2f}", _date_after],
+                  f"{_avg_qty_after:.1f}", f"£{_avg_price_after:.2f}", _date_after],
         '变化': [f"-{_raw_rows - _clean_rows:,} ({(1 - _clean_rows/_raw_rows)*100:.1f}%)",
                 f"-{_raw_customers - _clean_customers:,}",
                 f"-{_raw_products - _clean_products:,}",
                 f"-{_raw_invoices - _clean_invoices:,}",
                 f"{_avg_qty_after - _avg_qty_before:+.1f}",
-                f"${_avg_price_after - _avg_price_before:+.2f}",
+                f"£{_avg_price_after - _avg_price_before:+.2f}",
                 "不变"],
     })
     st.dataframe(_cmp_table, width='stretch', hide_index=True)
@@ -765,7 +765,7 @@ if page == "📈 数据概览":
     _avg_price_all_rows = raw_df['Price'].mean()
     st.caption(f"💡 **口径说明**: 「清洗前平均数量」统计全部 {len(raw_df):,} 行; "
                f"「清洗前平均单价」只统计 Price > 0 的行 (剔除 {quality_report['zero_neg_price']:,} 条零/负价格), "
-               f"即 \\${_avg_price_before:.2f} 而非全部行的 \\${_avg_price_all_rows:.2f}。"
+               f"即 £{_avg_price_before:.2f} 而非全部行的 £{_avg_price_all_rows:.2f}。"
                "两行口径不同, 不能当成同一把尺子来比 —— 清洗后单价下降的主因是高价非商品行 (POST / BANK CHARGES) 被剔除。")
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -803,10 +803,10 @@ if page == "📈 数据概览":
     with col3:
         st.markdown(f'<div class="metric-card"><h2>{cleaning_summary["unique_products"]:,}</h2><p>商品数量 (Products)</p></div>', unsafe_allow_html=True)
     with col4:
-        st.markdown(f'<div class="metric-card"><h2>${rfm_stats["total_revenue"]:,.0f}</h2><p>总收入 (Total Revenue)</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><h2>£{rfm_stats["total_revenue"]:,.0f}</h2><p>总收入 (Total Revenue)</p></div>', unsafe_allow_html=True)
     with col5:
         avg_order = cleaned_df.groupby('Invoice')['Revenue'].sum().mean()
-        st.markdown(f'<div class="metric-card"><h2>${avg_order:,.2f}</h2><p>平均订单金额 (Avg Order)</p></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card"><h2>£{avg_order:,.2f}</h2><p>平均订单金额 (Avg Order)</p></div>', unsafe_allow_html=True)
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
 
@@ -817,7 +817,7 @@ if page == "📈 数据概览":
         _trend_metric = st.radio("看哪个指标", ["收入", "销量"], horizontal=True,
                                  key="overview_trend_metric", label_visibility="collapsed")
         _trend_col = 'Revenue' if _trend_metric == '收入' else 'Quantity'
-        _trend_label = '收入 (美元 $)' if _trend_metric == '收入' else '销量 (件)'
+        _trend_label = '收入 (英镑 £)' if _trend_metric == '收入' else '销量 (件)'
         monthly = cleaned_df.set_index('InvoiceDate').resample('ME')[_trend_col].sum().reset_index()
         fig_revenue = px.area(monthly, x='InvoiceDate', y=_trend_col,
                               labels={_trend_col: _trend_label, 'InvoiceDate': '日期'},
@@ -848,7 +848,7 @@ if page == "📈 数据概览":
                              color=_country_col, color_continuous_scale='Blues')
         fig_country.update_layout(**CHART_LAYOUT, height=420, showlegend=False,
                                   yaxis={'categoryorder': 'total ascending'},
-                                  xaxis_title='收入 (美元 $)' if _country_metric == '收入' else '订单数 (张)')
+                                  xaxis_title='收入 (英镑 £)' if _country_metric == '收入' else '订单数 (张)')
         st.plotly_chart(fig_country, width='stretch')
 
 # ============================================================
@@ -892,9 +892,9 @@ elif page == "🔍 数据探索":
     _seg_configs = {
         'Quantity': {'title': '每行购买数量分布 (按交易行数)', 'xaxis_title': '购买数量',
                      'color': COLORS['primary'], 'icon': '📦'},
-        'Price':    {'title': '商品单价分布 (按交易行数)', 'xaxis_title': '单价 (美元 $)',
+        'Price':    {'title': '商品单价分布 (按交易行数)', 'xaxis_title': '单价 (英镑 £)',
                      'color': COLORS['secondary'], 'icon': '💲'},
-        'Revenue':  {'title': '单笔交易收入分布', 'xaxis_title': '收入 (美元 $)',
+        'Revenue':  {'title': '单笔交易收入分布', 'xaxis_title': '收入 (英镑 £)',
                      'color': COLORS['success'], 'icon': '💰'},
     }
 
@@ -960,7 +960,7 @@ elif page == "🔍 数据探索":
                      hover_data=['StockCode', '销量', '订单数'])
     fig_top.update_layout(**CHART_LAYOUT, height=max(350, top_n * 32), showlegend=False,
                           yaxis={'categoryorder': 'total ascending'},
-                          xaxis_title={'收入': '总收入 (美元 $)', '销量': '销量 (件)',
+                          xaxis_title={'收入': '总收入 (英镑 £)', '销量': '销量 (件)',
                                        '订单数': '订单数 (张)'}[_top_metric])
     st.plotly_chart(fig_top, width='stretch')
     st.caption("💡 **解读**: 默认按收入看，头部是家居装饰和节日用品；切到销量或订单数，能看出哪些商品是「走量」而不是「卖得贵」——两种榜单回答的问题不一样。")
@@ -1124,7 +1124,7 @@ elif page == "👥 客户特征分析":
                             color_continuous_scale='RdYlGn_r',
                             hover_data=['Customer ID'], opacity=0.6)
         fig_fm.update_layout(**CHART_LAYOUT, title="频率 vs 消费金额 (气泡大小/颜色 = 最近购买)",
-                             xaxis_title='购买频率 (次)', yaxis_title='消费金额 ($)', height=450)
+                             xaxis_title='购买频率 (次)', yaxis_title='消费金额 (£)', height=450)
         st.plotly_chart(fig_fm, width='stretch')
 
     st.caption("💡 **解读**: 左图高频客户 (右侧) 消费金额更高且购买更近期；右图右上角的少量极端客户消费金额远超其余，偏态分布一目了然。")
@@ -1446,7 +1446,7 @@ elif page == "🎯 K-Means 聚类":
         if len(sel_customers) > 0:
             with st.expander(f"📋 已选中 {len(sel_customers)} 位客户 — 点击展开详情", expanded=True):
                 display_sel = sel_customers[['Customer ID', 'Recency', 'Frequency', 'Monetary']].copy()
-                display_sel.columns = ['客户 ID', 'R (天)', 'F (次)', 'M ($)']
+                display_sel.columns = ['客户 ID', 'R (天)', 'F (次)', 'M (£)']
                 st.dataframe(display_sel, width='stretch', hide_index=True, height=300)
 
     st.markdown('<div class="custom-divider"></div>', unsafe_allow_html=True)
@@ -1460,7 +1460,7 @@ elif page == "🎯 K-Means 聚类":
         display_profile['标签'] = display_profile.index.map(lambda c: labels[c]['name'])
         _prof_cols = ['标签', 'Customers', 'Pct_Customers',
                       'Avg_Recency', 'Avg_Frequency', 'Avg_Monetary']
-        _prof_names = ['客户分群', '客户数', '客户占比%', '平均R(天)', '平均F(次)', '平均M($)']
+        _prof_names = ['客户分群', '客户数', '客户占比%', '平均R(天)', '平均F(次)', '平均M(£)']
         # 启用扩展特征时把两个新维度的各簇均值也放进画像 (列名取 EXTENDED_FEATURE_INFO)
         for _key, _meta in EXTENDED_FEATURE_INFO.items():
             if f'Avg_{_key}' in display_profile.columns:
@@ -1526,7 +1526,7 @@ elif page == "🎯 K-Means 聚类":
             # 扩展特征启用时, 卡片里补上这两个维度的簇均值
             _ext_html = ''
             if 'Avg_AOV' in profile.columns:
-                _ext_html += f"平均客单价: <b>${profile.loc[cluster_id, 'Avg_AOV']:,.0f}</b><br>\n                    "
+                _ext_html += f"平均客单价: <b>£{profile.loc[cluster_id, 'Avg_AOV']:,.0f}</b><br>\n                    "
             if 'Avg_N_products' in profile.columns:
                 _ext_html += f"平均品类广度: <b>{profile.loc[cluster_id, 'Avg_N_products']:.0f} 种</b><br>\n                    "
             st.markdown(f"""
@@ -1541,7 +1541,7 @@ elif page == "🎯 K-Means 聚类":
                     客户数: <b>{profile.loc[cluster_id, 'Customers']:,}</b> ({profile.loc[cluster_id, 'Pct_Customers']}%)<br>
                     平均 R: <b>{profile.loc[cluster_id, 'Avg_Recency']:.0f} 天</b><br>
                     平均 F: <b>{profile.loc[cluster_id, 'Avg_Frequency']:.1f} 次</b><br>
-                    平均 M: <b>${profile.loc[cluster_id, 'Avg_Monetary']:,.2f}</b><br>
+                    平均 M: <b>£{profile.loc[cluster_id, 'Avg_Monetary']:,.2f}</b><br>
                     {_ext_html}收入占比: <b>{profile.loc[cluster_id, 'Pct_Revenue']}%</b><br>
                     簇轮廓系数: <b>{result['silhouette_per_cluster'].get(cluster_id, 0):.3f}</b>
                 </p>
@@ -2085,21 +2085,21 @@ elif page == "📦 商品与国家调查":
         fig_word.update_layout(**CHART_LAYOUT, height=430,
                                title='各品类词的收入贡献 (颜色 = 平均单价)',
                                yaxis={'categoryorder': 'total ascending'},
-                               xaxis_title='收入 (美元 $)',
+                               xaxis_title='收入 (英镑 £)',
                                coloraxis_colorbar=dict(title='平均单价'))
         st.plotly_chart(fig_word, width='stretch')
     with _w2:
         fig_ps = px.scatter(_words, x='销量', y='平均单价', size='收入', color='收入',
                             color_continuous_scale='Plasma', hover_name='显示名', log_x=True,
-                            labels={'销量': '总销量 (件)', '平均单价': '平均单价 ($)'})
+                            labels={'销量': '总销量 (件)', '平均单价': '平均单价 (£)'})
         fig_ps.update_layout(**CHART_LAYOUT, height=430,
                              title='销量 vs 平均单价 (气泡大小 = 收入)')
         st.plotly_chart(fig_ps, width='stretch')
 
     _word_table = _words[['关键词', '中文含义', '词类', '商品数', '收入',
                           '收入占比%', '销量', '平均单价']].copy()
-    _word_table.columns = ['品类词', '含义', '词类', '商品数', '收入 ($)',
-                           '收入占比%', '销量 (件)', '平均单价 ($)']
+    _word_table.columns = ['品类词', '含义', '词类', '商品数', '收入 (£)',
+                           '收入占比%', '销量 (件)', '平均单价 (£)']
     st.dataframe(_word_table, width='stretch', hide_index=True)
 
     # 页面上只显示前 N 个词, 这里把全部注释列出来, 观众可随时查任意词的含义
@@ -2118,8 +2118,8 @@ elif page == "📦 商品与国家调查":
     _type_txt = '、'.join(f"**{_t}** {_n} 个"
                           for _t, _n in _words['词类'].value_counts().items())
     st.caption(f"💡 **解读**: 收入贡献最高的是 **{_top_word['关键词']}**（{_top_word['中文含义']}）——覆盖 "
-               f"{int(_top_word['商品数'])} 种商品、收入 \\${_top_word['收入']:,.0f}、占全站 {_top_word['收入占比%']}%；"
-               f"平均单价最高的是 **{_hi_price_word['关键词']}**（{_hi_price_word['中文含义']}），约 \\${_hi_price_word['平均单价']:.2f}/件。"
+               f"{int(_top_word['商品数'])} 种商品、收入 £{_top_word['收入']:,.0f}、占全站 {_top_word['收入占比%']}%；"
+               f"平均单价最高的是 **{_hi_price_word['关键词']}**（{_hi_price_word['中文含义']}），约 £{_hi_price_word['平均单价']:.2f}/件。"
                f"这 {len(_words)} 个高频词里 {_type_txt}，但**颜色词在前五名占了 3 席**（RED / WHITE / PINK）—— "
                f"顾客高度按「同一个商品的不同花色」选购，与第 5 页关联规则的发现一致。"
                f"右图（对数 X 轴）右下角是**走量**型、左上角是**量小价高**型：前者适合曝光与凑单，后者适合重点推荐。")
@@ -2154,8 +2154,8 @@ elif page == "📦 商品与国家调查":
     with _ck3:
         st.metric("海外客户数", f"{_ov_n:,} 人", help="英国以外的客户, 按客户所属国家划分")
     with _ck4:
-        st.metric("海外平均客单价", f"${_ov_aov:,.0f}",
-                  help=f"英国本土为 ${_uk_aov:,.0f}")
+        st.metric("海外平均客单价", f"£{_ov_aov:,.0f}",
+                  help=f"英国本土为 £{_uk_aov:,.0f}")
 
     _cvv1, _cvv2 = st.columns([1, 1])
     with _cvv1:
@@ -2164,8 +2164,8 @@ elif page == "📦 商品与国家调查":
         _prof['客户占比%'] = (_prof['客户数'] / _prof['客户数'].sum() * 100).round(1)
         _prof_disp = _prof[['客户数', '客户占比%', 'Recency', 'Frequency', 'Monetary',
                             'AOV', 'N_products', '收入占比%']]
-        _prof_disp.columns = ['客户数', '客户占比%', '平均R(天)', '平均F(次)', '平均消费($)',
-                              '平均客单价($)', '平均品类广度(种)', '收入占比%']
+        _prof_disp.columns = ['客户数', '客户占比%', '平均R(天)', '平均F(次)', '平均消费(£)',
+                              '平均客单价(£)', '平均品类广度(种)', '收入占比%']
         st.dataframe(_prof_disp, width='stretch')
     with _cvv2:
         _cmp_df = pd.DataFrame({
@@ -2184,7 +2184,7 @@ elif page == "📦 商品与国家调查":
 
     st.caption(f"💡 **解读**: 英国以 {_uk_rev_share:.1f}% 的收入占比绝对主导, 但只看收入会漏掉一个事实 —— "
                f"**海外客户人少、单体价值更高**: 海外 {_ov_n:,} 人贡献了 {_ov_rev_share:.1f}% 的收入, "
-               f"平均消费 \\${_ov_mon:,.0f} vs 英国 \\${_uk_mon:,.0f}, 平均客单价 \\${_ov_aov:,.0f} vs \\${_uk_aov:,.0f}。"
+               f"平均消费 £{_ov_mon:,.0f} vs 英国 £{_uk_mon:,.0f}, 平均客单价 £{_ov_aov:,.0f} vs £{_uk_aov:,.0f}。"
                f"本土适合做频次与复购, 海外适合做客单价与批发阶梯价。")
 
     st.markdown("#### 📋 国家明细 (按收入排序)")
@@ -2192,8 +2192,8 @@ elif page == "📦 商品与国家调查":
                           help=f"数据共覆盖 {len(_country)} 个国家/地区")
     _country_show = _country[['Country', '客户数', '收入', '收入占比%', '订单数',
                               '客单价', '复购率%', '商品种类数']].head(_cshow).copy()
-    _country_show.columns = ['国家', '客户数', '收入 ($)', '收入占比%', '订单数',
-                             '客单价 ($)', '复购率%', '商品种类数']
+    _country_show.columns = ['国家', '客户数', '收入 (£)', '收入占比%', '订单数',
+                             '客单价 (£)', '复购率%', '商品种类数']
     st.dataframe(_country_show, width='stretch', hide_index=True)
     # 每个国家的「客户数」是该国内唯一客户数, 跨多国下单的客户会在各国各计一次
     _cust_col_sum = int(_country['客户数'].sum())
@@ -2209,11 +2209,11 @@ elif page == "📦 商品与国家调查":
     _cm_disp = _cm.copy()
     _cm_disp['月份'] = _cm_disp['月份'].dt.strftime('%Y-%m')
     fig_cm = px.area(_cm_disp, x='月份', y=_cm_cols,
-                     labels={'value': '收入 (美元 $)', 'variable': '国家'},
+                     labels={'value': '收入 (英镑 £)', 'variable': '国家'},
                      color_discrete_sequence=COLORS['palette'])
     fig_cm.update_layout(**CHART_LAYOUT, height=420,
                          title='收入 Top 5 国家的月度收入构成',
-                         xaxis_title='月份', yaxis_title='收入 (美元 $)',
+                         xaxis_title='月份', yaxis_title='收入 (英镑 £)',
                          legend=dict(orientation='h', yanchor='bottom', y=1.02,
                                      xanchor='center', x=0.5))
     st.plotly_chart(fig_cm, width='stretch')
